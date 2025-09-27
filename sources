@@ -1,0 +1,48 @@
+#
+# Real Anti-Ransomware Driver Build System
+# Uses Windows Driver Kit (WDK) to compile the kernel driver
+#
+
+# Configuration
+DRIVER_NAME = RealAntiRansomwareDriver
+TARGET_OS = Win10
+KMDF_VERSION_MAJOR = 1
+
+TARGETNAME = $(DRIVER_NAME)
+TARGETTYPE = DRIVER
+TARGETPATH = obj
+
+# Include paths  
+INCLUDES = $(INCLUDES); \
+           $(DDK_INC_PATH); \
+           $(WDK_INC_PATH); \
+           $(SDK_INC_PATH)
+
+# Source files
+SOURCES = RealAntiRansomwareDriver.c
+
+# Libraries to link with
+TARGETLIBS = \
+    $(DDK_LIB_PATH)\fltMgr.lib \
+    $(DDK_LIB_PATH)\ntoskrnl.lib \
+    $(DDK_LIB_PATH)\hal.lib \
+    $(DDK_LIB_PATH)\ntstrsafe.lib
+
+# Compiler flags for security and optimization
+C_DEFINES = $(C_DEFINES) -DUNICODE -D_UNICODE
+
+# Security hardening options
+MSC_WARNING_LEVEL = /W4 /WX          # Treat warnings as errors
+BUFFER_OVERFLOW_CHECKS = 1           # Enable buffer overflow detection
+USE_MSVCRT = 1                       # Use multi-threaded runtime
+
+# Enable Control Flow Guard (CFG) for additional security
+KERNEL_STACK_CONTROL_FLOW_GUARD = 1
+
+# Driver signing configuration (for production)
+# SIGNTOOL_SIGN = /a /v /t http://timestamp.digicert.com $(TARGET)
+
+# Debug configuration
+!IF "$(DDKBUILDENV)" == "chk"
+C_DEFINES = $(C_DEFINES) -DDBG=1
+!ENDIF

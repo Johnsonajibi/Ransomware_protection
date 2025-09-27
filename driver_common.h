@@ -1,0 +1,38 @@
+#ifndef DRIVER_COMMON_H
+#define DRIVER_COMMON_H
+
+// IOCTL codes for user-mode communication
+#define IOCTL_ADD_PROTECTED_PATH    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_REMOVE_PROTECTED_PATH CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_VALIDATE_TOKEN        CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_GET_STATISTICS        CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Shared structures between user and kernel mode
+typedef struct _PROTECTED_PATH_REQUEST {
+    WCHAR Path[260];
+    ULONG PathLength;
+} PROTECTED_PATH_REQUEST, *PPROTECTED_PATH_REQUEST;
+
+typedef struct _TOKEN_VALIDATION_REQUEST {
+    UCHAR TokenData[1024];
+    ULONG TokenLength;
+    ULONG ProcessId;
+    ULONG RequestedAccess;
+} TOKEN_VALIDATION_REQUEST, *PTOKEN_VALIDATION_REQUEST;
+
+typedef struct _DRIVER_STATISTICS {
+    ULONG TotalRequests;
+    ULONG BlockedRequests;
+    ULONG AllowedRequests;
+    ULONG InvalidTokens;
+    ULONG ProtectedPaths;
+} DRIVER_STATISTICS, *PDRIVER_STATISTICS;
+
+// Operation flags
+#define OP_READ    0x01
+#define OP_WRITE   0x02
+#define OP_DELETE  0x04
+#define OP_RENAME  0x08
+#define OP_CREATE  0x10
+
+#endif // DRIVER_COMMON_H
