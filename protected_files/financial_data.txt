@@ -1,3 +1,0 @@
-Financial records:
-Account: 12345
-Balance: $10,000
