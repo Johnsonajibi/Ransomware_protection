@@ -1,1590 +1,604 @@
-# Real Anti-Ransomware Platform
+# Anti-Ransomware Protection Platform
 
-**Enterprise-grade anti-ransomware protection system** featuring tri-factor authentication (TPM + Device Fingerprinting + PQC USB), dual-stack kernel and user-mode defenses, database-aware service token enforcement, real-time behavioral analysis, comprehensive audit logging, and production-ready operational tooling.
+A Windows-based ransomware defense system that implements kernel-level file system monitoring, hardware-rooted authentication, and cryptographic access tokens. The platform combines a minifilter driver, multi-factor authentication, and behavioral analysis to protect against file encryption attacks.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue.svg)](https://www.microsoft.com/windows)
-[![TPM](https://img.shields.io/badge/TPM-2.0%20Ready-green.svg)](https://trustedcomputinggroup.org/work-groups/trusted-platform-module/)
+[![TPM](https://img.shields.io/badge/TPM-2.0-green.svg)](https://trustedcomputinggroup.org/work-groups/trusted-platform-module/)
 [![Language](https://img.shields.io/badge/language-C%2B%2B17%20%7C%20C%20%7C%20Python%203.11-green.svg)](https://github.com/Johnsonajibi/Ransomeware_protection)
 
-> **Production Status**: All code is real, fully implemented, and free of placeholders. Ready for enterprise deployment with comprehensive testing and security hardening.
-> 
-> **NEW: Tri-Factor Authentication** - Hardware TPM 2.0 + Device Fingerprinting + Post-Quantum Cryptography USB for maximum security
+## Contents
 
----
+- [System Overview](#system-overview)
+- [Architecture](#architecture)
+- [Security Components](#security-components)
+- [Build Instructions](#build-instructions)
+- [Deployment](#deployment)
+- [Configuration](#configuration)
+- [Monitoring](#monitoring)
+- [Troubleshooting](#troubleshooting)
 
-## Table of Contents
+## System Overview
 
-1. [Executive Summary](#executive-summary)
-2. [Tri-Factor Authentication](#tri-factor-authentication-new)
-   - [Security Levels](#security-levels)
-   - [TPM Integration](#tpm-integration)
-   - [Device Fingerprinting](#device-fingerprinting)
-   - [Post-Quantum Cryptography USB](#post-quantum-cryptography-usb)
-   - [Audit Logging](#audit-logging)
-3. [Platform Architecture](#platform-architecture)
-   - [High-Level System Overview](#high-level-system-overview)
-   - [Tri-Factor Authentication Architecture](#tri-factor-authentication-architecture)
-   - [Layered Architecture Diagram](#layered-architecture-diagram)
-   - [Component Interaction Map](#component-interaction-map)
-   - [Data Flow Architecture](#data-flow-architecture)
-   - [Security Boundaries & Trust Zones](#security-boundaries--trust-zones)
-4. [Core Components Deep Dive](#core-components-deep-dive)
-   - [Kernel Minifilter Driver](#kernel-minifilter-driver)
-   - [User-Mode Manager](#user-mode-manager)
-   - [Python Protection Suite](#python-protection-suite)
-   - [Database Protection System](#database-protection-system)
-5. [Service Token Architecture](#service-token-architecture)
-   - [Token Lifecycle Diagram](#token-lifecycle-diagram)
-   - [Authentication & Authorization Flow](#authentication--authorization-flow)
-   - [Binary Attestation Process](#binary-attestation-process)
-6. [Threat Detection & Response](#threat-detection--response)
-   - [Detection Pipeline](#detection-pipeline)
-   - [Behavioral Analysis Engine](#behavioral-analysis-engine)
-   - [Incident Response Workflow](#incident-response-workflow)
-7. [Deployment Architecture](#deployment-architecture)
-   - [Single-Host Deployment](#single-host-deployment)
-   - [Enterprise Multi-Tier Deployment](#enterprise-multi-tier-deployment)
-   - [High-Availability Configuration](#high-availability-configuration)
-8. [Build & Installation](#build--installation)
-9. [Configuration & Operations](#configuration--operations)
-10. [API Reference](#api-reference)
-11. [Monitoring & Observability](#monitoring--observability)
-12. [Security Model](#security-model)
-13. [Performance Characteristics](#performance-characteristics)
-14. [Troubleshooting Guide](#troubleshooting-guide)
-15. [Repository Structure](#repository-structure)
-16. [Contributing](#contributing)
-17. [License & Legal](#license--legal)
+### Design Objectives
 
----
+This platform addresses specific limitations in conventional endpoint protection:
 
-## Executive Summary
+1. **Credential-based attacks**: Traditional user-mode security fails when malware obtains administrative credentials
+2. **Database server protection**: Performance requirements limit file-level monitoring for database engines
+3. **Service account compromise**: Legitimate system services become attack vectors after credential theft
+4. **Process termination**: Malware with elevated privileges can terminate user-mode security processes
 
-### The Problem
+### Technical Approach
 
-Traditional anti-ransomware solutions fail in critical scenarios:
-- **Credential Theft**: Ransomware using stolen admin credentials bypasses user-based access controls
-- **Database Server Attacks**: Performance requirements force whitelisting of databases (SQL Server, PostgreSQL, Oracle)
-- **Service Account Compromise**: Legitimate services turned malicious after credential theft
-- **Bypass Techniques**: User-mode protections can be terminated by sophisticated malware
-
-### Our Solution
-
-A **multi-layered defense architecture** combining:
-
-1. **🔐 Tri-Factor Authentication**: Hardware TPM 2.0 + Device Fingerprinting (6-8 layers) + Post-Quantum Cryptography USB (Dilithium3)
-2. **Kernel-Level Protection** (Ring 0): Windows minifilter driver that intercepts file operations before they reach the filesystem
-3. **Service Token System**: Cryptographic tokens with SHA256 binary attestation, path confinement, and time-based expiry
-4. **Behavioral Analysis**: Real-time pattern detection across file, process, registry, network, and USB activity
-5. **Comprehensive Audit Logging**: Every security operation logged with process information for compliance and forensics
-
-### Key Differentiators
-
-| FeHardware TPM Integration** | ❌ Not used | ✅ TPM 2.0 sealing with PCR measurements |
-| **Post-Quantum Cryptography** | ❌ Not available | ✅ Dilithium3 (ML-DSA-65) signatures |
-| **Device Fingerprinting** | Software only | ✅ 6-8 hardware layers (CPU, BIOS, MAC, disk) |
-| **Multi-Factor Token Auth** | Single factor | ✅ Tri-factor (TPM + DeviceFP + USB) |
-| **Audit Trail** | Basic logs | ✅ Comprehensive with process tracking |
-| **Database Protection** | Whitelist only | ✅ Service tokens + binary attestation + path confinement |
-| **Credential Theft Defense** | ❌ Fails | ✅ Binary hash verification prevents impersonation |
-| **Kernel-Level Enforcement** | User-mode only | ✅ Ring-0 minifilter (cannot be terminated) |
-| **Performance Impact** | 10-30% overhead | <5% overhead (kernel-optimized) |
-| **Zero-Day Protection** | Signature-based | ✅ Behavioral analysis + heuristics |
-| **Path Confinement** | Not available | ✅ Database writes restricted to data directories |
-
----
-
-## 🔐 Tri-Factor Authentication (NEW)
-
-The platform implements **industry-leading tri-factor authentication** combining three independent security factors that work together to provide maximum protection against unauthorized access and credential theft.
-
-### Security Levels
-
-The system automatically adjusts security based on available authentication factors:
-
-| Level | Score | Factors | Token Size | Use Case |
-|-------|-------|---------|------------|----------|
-| **MAXIMUM** | 100 | TPM + DeviceFP + USB | ~3500 bytes | Production systems with admin install |
-| **HIGH** | 80 | TPM + DeviceFP | ~3400 bytes | Servers with TPM but no USB |
-| **MEDIUM** | 60 | DeviceFP + USB | ~3389 bytes | Standard user installations |
-| **LOW** | 40 | Single factor | ~3300 bytes | Degraded mode |
-| **EMERGENCY** | 20 | Override | ~3200 bytes | Recovery scenarios only |
-
-**Current Status**: System operates in **MEDIUM** mode (DeviceFP + USB) when run as standard user, automatically upgrades to **MAXIMUM** when installed with administrator privileges.
-
-### Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    TRI-FACTOR AUTHENTICATION SYSTEM                         │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
-│   FACTOR 1: TPM      │  │ FACTOR 2: DEVICE FP  │  │  FACTOR 3: PQC USB   │
-│   (Hardware Root)    │  │  (6-8 Layer Bind)    │  │  (Dilithium3 Sig)    │
-├──────────────────────┤  ├──────────────────────┤  ├──────────────────────┤
-│ • TPM 2.0 chip       │  │ • CPU serial number  │  │ • Removable USB      │
-│ • WMI access         │  │ • BIOS UUID          │  │ • 3309-byte sig      │
-│ • PCR measurements   │  │ • MAC address        │  │ • ML-DSA-65 algo     │
-│ • Seal/Unseal ops    │  │ • Disk serial        │  │ • Quantum-resistant  │
-│ • Admin required     │  │ • Windows product ID │  │ • Drive detection    │
-│ • Cannot be faked    │  │ • Machine GUID       │  │ • Signature verify   │
-│ • Spec: 2.0.1.38     │  │ • BLAKE2b hash       │  │ • 1952-byte privkey  │
-│ • Platform binding   │  │ • Deterministic      │  │ • 4032-byte pubkey   │
-└──────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘
-           │                         │                         │
-           └─────────────┬───────────┴───────────┬─────────────┘
-                         │                       │
-                         ▼                       ▼
-              ┌────────────────────────────────────────┐
-              │   TriFactorAuthManager (1373+ lines)   │
-              ├────────────────────────────────────────┤
-              │ • Token issuance with all factors      │
-              │ • Token verification with any factors  │
-              │ • Security level calculation           │
-              │ • Audit logging integration            │
-              │ • Proof generation (PCR values)        │
-              │ • Fallback handling (graceful degrade) │
-              └────────────────┬───────────────────────┘
-                               │
-                               ▼
-              ┌────────────────────────────────────────┐
-              │       Cryptographic Token Format       │
-              ├────────────────────────────────────────┤
-              │ base64(                                │
-              │   encrypted_payload +                  │
-              │   tpm_sealed_blob +      (if TPM)      │
-              │   device_fingerprint +   (if DeviceFP) │
-              │   pqc_signature          (if USB)      │
-              │ )                                      │
-              └────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            AUDIT LOGGING SYSTEM                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ Every security operation logged with:                                      │
-│ • Timestamp              • Security level      • Success/failure           │
-│ • Event type             • TPM usage (true/false)                          │
-│ • Process ID & name      • Detailed context    • Error messages            │
-│ • User account           • File: .audit_logs/audit_YYYYMMDD.jsonl         │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    A[File System Access] --> B[Kernel Minifilter]
+    B --> C{Token Validation}
+    C -->|Valid| D[Allow Operation]
+    C -->|Invalid| E[Deny Operation]
+    
+    F[Administrator] --> G[Issue Cryptographic Token]
+    G --> H[Service Process]
+    H --> B
+    
+    I[TPM 2.0] --> G
+    J[Device Fingerprint] --> G
+    K[PQC USB] --> G
 ```
 
-### TPM Integration
+### Core Capabilities
 
-**Hardware Root of Trust** - Trusted Platform Module 2.0
+| Component | Implementation | Function |
+|-----------|---------------|----------|
+| Kernel Driver | Windows minifilter (Ring 0) | IRP interception before filesystem access |
+| Service Tokens | SHA256 + time-bound + path-confined | Cryptographic process authorization |
+| TPM Integration | WMI + PCR measurements | Hardware-rooted platform binding |
+| Device Binding | 6-8 hardware identifiers | Machine-specific token generation |
+| PQC Signatures | Dilithium3 (ML-DSA-65) | Quantum-resistant authentication |
+| Audit System | Process-level JSON logs | Compliance and forensic analysis |
 
-The system leverages TPM 2.0 for cryptographic platform binding that cannot be bypassed:
+## Architecture
 
+### System Layers
+
+```mermaid
+graph TB
+    subgraph "User Space (Ring 3)"
+        CLI[CLI Manager<br/>RealAntiRansomwareManager.exe]
+        GUI[Python GUI<br/>tkinter/Flask]
+        SVC[Service Manager<br/>Windows Service]
+    end
+    
+    subgraph "Authentication Layer"
+        TPM[TPM Manager<br/>PCR Binding]
+        FP[Device Fingerprint<br/>6-8 Hardware Layers]
+        USB[PQC USB Auth<br/>Dilithium3]
+    end
+    
+    subgraph "Kernel Space (Ring 0)"
+        DRV[Minifilter Driver<br/>RealAntiRansomwareDriver.sys]
+        CACHE[Token Cache<br/>PID→Token Mapping]
+    end
+    
+    subgraph "File System"
+        NTFS[(NTFS/ReFS)]
+        DATA[(Protected Data)]
+    end
+    
+    CLI --> TPM
+    GUI --> FP
+    SVC --> USB
+    
+    TPM --> DRV
+    FP --> DRV
+    USB --> DRV
+    
+    DRV --> CACHE
+    CACHE --> NTFS
+    NTFS --> DATA
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    TPM 2.0 INTEGRATION                          │
-└─────────────────────────────────────────────────────────────────┘
 
-Access Methods (Preference Order):
-1. WMI (root\cimv2\Security\MicrosoftTpm) ← Primary
-2. PowerShell (Get-Tpm cmdlet)
-3. TrustCore-TPM library (if installed)
-4. Built-in TPM.sys driver
-5. Software fallback (no TPM)
+### Authentication Flow
 
-Key Operations:
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│   TPM Init       │────▶│   Seal Token     │────▶│  Unseal & Verify │
-├──────────────────┤     ├──────────────────┤     ├──────────────────┤
-│ • Check presence │     │ • Bind to PCRs   │     │ • Check PCR state│
-│ • Verify version │     │ • Create blob    │     │ • Decrypt token  │
-│ • Admin check    │     │ • 128-byte seal  │     │ • Validate data  │
-│ • WMI namespace  │     │ • Hardware bound │     │ • Detect tampering│
-└──────────────────┘     └──────────────────┘     └──────────────────┘
-
-Platform Configuration Registers (PCRs):
-• PCR[0]: BIOS/firmware code
-• PCR[1]: BIOS/firmware configuration
-• PCR[2]: Option ROM code
-• PCR[7]: Secure Boot state
-
-Cryptographic Proof:
-✓ PCR values (32-byte SHA256 hashes) cannot be forged
-✓ Token size: MAXIMUM ~3500 bytes vs MEDIUM ~3389 bytes
-✓ Seal/unseal test: Creates test blob, measures success
-✓ WMI access: Only available with real TPM hardware
-✓ Spec version: TPM 2.0.1.38 reported from hardware
-✓ Audit logs: Show tpm_used=true, pcr_indices=[0,1,2,7]
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant Manager
+    participant TPM
+    participant Driver
+    participant Process
+    
+    Admin->>Manager: configure-db sqlservr.exe
+    Manager->>Manager: Calculate SHA256 hash
+    Manager->>Driver: SET_DB_POLICY (IOCTL)
+    Driver->>Driver: Store policy
+    
+    Admin->>Manager: issue-token sqlservr.exe
+    Manager->>TPM: Seal to PCRs [0,1,2,7]
+    TPM-->>Manager: TPM-sealed blob
+    Manager->>Driver: ISSUE_SERVICE_TOKEN (IOCTL)
+    Driver->>Driver: Cache token (PID→Token)
+    
+    Process->>Driver: Write to C:\SQLData\file.mdf
+    Driver->>Driver: Lookup token by PID
+    Driver->>Driver: Validate: hash + path + expiry
+    Driver->>Process: Allow operation
 ```
+
+### Token Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> NotIssued: Initial State
+    NotIssued --> Pending: issue-token command
+    Pending --> Active: Validation successful
+    Pending --> Rejected: Validation failed
+    Active --> Valid: I/O operations
+    Active --> Renewed: Periodic refresh
+    Active --> Expired: TTL exceeded
+    Valid --> Active: Continue operations
+    Renewed --> Active: Token refreshed
+    Expired --> Revoked: Auto-cleanup
+    Active --> Revoked: Manual revoke
+    Revoked --> [*]
+    Rejected --> [*]
+```
+
+## Security Components
+
+### TPM 2.0 Integration
+
+Hardware-based platform attestation using Trusted Platform Module:
+
+**Implementation:**
+- Access method: WMI (`root\cimv2\Security\MicrosoftTpm`)
+- PCR measurements: indices [0, 1, 2, 7]
+- Seal/unseal operations for cryptographic binding
+- Spec version: TPM 2.0.1.38
+
+**Security properties:**
+- Tokens sealed to specific boot state
+- Platform changes invalidate sealed data
+- PCR values provide cryptographic proof
+- Cannot be emulated in software
 
 **Requirements:**
-- TPM 2.0 hardware (present in most modern PCs since 2016)
-- Windows 10/11 with TPM enabled in BIOS
+- TPM 2.0 hardware module
 - Administrator privileges for WMI access
-- Run installation: `install_with_admin.py` for persistent TPM
-
-**Benefits:**
-- **Tamper-proof**: Tokens sealed to exact boot state
-- **Hardware-bound**: Cannot extract to another machine
-- **Platform attestation**: Detects BIOS/firmware changes
-- **Cryptographic proof**: PCR values verifiable by auditors
+- Windows 10/11 with TPM enabled in BIOS
 
 ### Device Fingerprinting
 
-**Multi-Layer Hardware Identification** - 6-8 deterministic hardware characteristics
+Multi-layer hardware identification for machine binding:
 
-Creates unique device signatures from hardware properties that survive reboots:
+| Layer | Data Source | Example |
+|-------|-------------|---------|
+| CPU | CPUID instruction | Serial number, manufacturer |
+| BIOS | WMI | UUID, firmware version |
+| Network | Network adapter | MAC address (primary) |
+| Storage | Disk controller | Serial number, volume GUID |
+| Windows | Registry | Machine GUID, product ID |
+| System | WMI | Computer name, domain |
 
+**Hash generation:**
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              DEVICE FINGERPRINTING (6-8 LAYERS)                 │
-└─────────────────────────────────────────────────────────────────┘
-
-Layer 1: CPU Info
-├─ Processor serial (CPUID)
-├─ Manufacturer (Intel, AMD)
-└─ Core count & architecture
-
-Layer 2: BIOS/Motherboard
-├─ BIOS UUID (WMI)
-├─ Motherboard serial
-└─ Firmware version
-
-Layer 3: Network
-├─ Primary MAC address
-├─ Network adapter ID
-└─ Persistent across reboots
-
-Layer 4: Storage
-├─ Primary disk serial
-├─ Volume GUID
-└─ Storage controller ID
-
-Layer 5: Windows Identity
-├─ Machine GUID (Registry)
-├─ Windows product ID
-└─ Installation ID
-
-Layer 6: System Info
-├─ Computer name
-├─ Domain membership
-└─ System UUID
-
-Optional Layers (8 total):
-├─ Layer 7: GPU serial
-└─ Layer 8: TPM endorsement key
-
-Fingerprint Generation:
-┌────────────────────┐
-│ Collect 6-8 layers │
-│        ↓           │
-│ Concatenate values │
-│        ↓           │
-│ BLAKE2b hash       │
-│ (person='ar-hybrid'│
-│  salt='antiransomw'│
-│  digest=32 bytes)  │
-│        ↓           │
-│ 64-char hex string │
-└────────────────────┘
-
-Properties:
-✓ Deterministic: Same hardware = same fingerprint
-✓ Collision-resistant: 2^256 keyspace
-✓ Hardware-bound: Changes if hardware replaced
-✓ No timestamp/entropy: Consistent across runs
+Inputs: 6-8 hardware identifiers
+Algorithm: BLAKE2b(person='ar-hybrid', salt='antiransomw')
+Output: 32-byte hash → 64-character hex string
 ```
 
-**Benefits:**
-- **Device binding**: Tokens work only on issuing device
-- **Hardware changes detected**: Replacing components invalidates tokens
-- **No bypass**: Cannot fake hardware identifiers
-- **Privacy-preserving**: One-way hash, not reversible
+**Properties:**
+- Deterministic: consistent across reboots
+- Collision-resistant: 2^256 keyspace
+- Privacy-preserving: one-way hash
+- Hardware-bound: changes if components replaced
 
-### Post-Quantum Cryptography USB
+### Post-Quantum Cryptography
 
-**Quantum-Resistant Signatures** - NIST-standardized Dilithium3 (ML-DSA-65)
+Quantum-resistant signatures using NIST-standardized algorithms:
 
-Uses removable USB drive presence and PQC signatures to provide physical authentication:
+**Algorithm:** Dilithium3 (ML-DSA-65)
+- Security level: NIST Level 3 (AES-192 equivalent)
+- Standardization: FIPS 204 (Module-Lattice-Based Digital Signature Algorithm)
+- Key sizes: 1952 bytes (private), 4032 bytes (public), 3309 bytes (signature)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│         POST-QUANTUM CRYPTOGRAPHY USB AUTHENTICATION            │
-└─────────────────────────────────────────────────────────────────┘
+**Implementation:**
+```python
+# USB drive detection
+drives = UsbDriveDetector.get_removable_drives()
 
-Algorithm: Dilithium3 (ML-DSA-65)
-├─ NIST Post-Quantum Cryptography Competition winner
-├─ Quantum computer resistant (lattice-based)
-├─ Security level: NIST Level 3 (equivalent to AES-192)
-└─ Standardized as FIPS 204 (ML-DSA)
+# Key generation (one-time)
+public_key, private_key = pqcdualusb.keypair()
 
-Key Sizes:
-┌──────────────┬──────────┐
-│ Private Key  │ 1952 B   │
-│ Public Key   │ 4032 B   │
-│ Signature    │ 3309 B   │
-└──────────────┴──────────┘
+# Signature generation
+challenge = generate_token_payload()
+signature = pqcdualusb.sign(challenge, private_key)
 
-USB Drive Detection:
-┌────────────────────────────────────┐
-│ UsbDriveDetector.get_removable_drives()
-│              ↓
-│ Returns: [{letter: 'E:', type: 'Removable', ...}]
-│              ↓
-│ Stores keypair on USB drive
-│              ↓
-│ Signs token challenge
-│              ↓
-│ 3309-byte signature appended to token
-└────────────────────────────────────┘
-
-Signature Process:
-1. Generate token payload
-2. Create 32-byte challenge (BLAKE2b)
-3. Read private key from USB
-4. Sign challenge with Dilithium3
-5. Append 3309-byte signature to token
-6. Token size: base + 3309 bytes
-
-Verification Process:
-1. Extract signature from token
-2. Read public key from USB (or cache)
-3. Verify signature with Dilithium3
-4. Check USB drive presence
-5. Accept only if both valid
-
-Benefits:
-✓ Quantum-resistant: Safe from future quantum attacks
-✓ Physical factor: Requires USB drive presence
-✓ NIST-approved: Government-standard cryptography
-✓ Large signatures: 3309 bytes (impossible to forge)
+# Verification
+is_valid = pqcdualusb.verify(challenge, signature, public_key)
 ```
 
-**Requirements:**
-- Removable USB drive (any capacity)
-- `pqcdualusb` library installed
-- USB drive connected during token operations
-
-**Benefits:**
-- **Physical security**: Something you have (USB drive)
-- **Quantum-safe**: Resistant to quantum computer attacks
-- **Future-proof**: NIST-standardized algorithm
-- **Portable**: USB key works across machines
+**Physical security:**
+- Private key stored on removable USB drive
+- Signature verification requires USB presence
+- 3309-byte signatures prevent forgery
+- Quantum computer resistant
 
 ### Audit Logging
 
-**Comprehensive Security Trail** - Every operation logged with process information
+Process-level security event tracking:
 
-All security operations are recorded in timestamped JSON log files with complete context:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    AUDIT LOGGING SYSTEM                         │
-└─────────────────────────────────────────────────────────────────┘
-
-Log Location: .audit_logs/audit_YYYYMMDD.jsonl
-Format: JSON Lines (one JSON object per line)
-
-Entry Structure:
+**Log format:** JSON Lines (.jsonl)
+```json
 {
   "timestamp": 1735229800.5,
-  "event_type": "tpm_seal",
-  "process_id": 12345,
-  "process_name": "python.exe",
-  "user": "john.doe",
+  "event_type": "token_verify",
+  "process_id": 2468,
+  "process_name": "sqlservr.exe",
+  "user": "NT SERVICE\\MSSQLSERVER",
   "tpm_used": true,
   "security_level": "MAXIMUM",
   "success": true,
   "details": {
+    "factors": ["TPM", "DeviceFP", "USB"],
     "pcr_indices": [0, 1, 2, 7],
-    "blob_size": 128,
-    "tpm_method": "wmi",
-    "message": "Token sealed to TPM PCRs [0, 1, 2, 7]"
-  },
-  "error": null
-}
-
-Event Types Logged:
-├─ tpm_init      : TPM initialization
-├─ tpm_seal      : Token sealed to TPM
-├─ tpm_unseal    : Token unsealed from TPM
-├─ token_issue   : Access token issued
-└─ token_verify  : Token verification
-
-Viewing Logs:
-┌────────────────────────────────────────────┐
-│ python view_audit_logs.py                  │  # Summary + recent
-│ python view_audit_logs.py tpm              │  # TPM events only
-│ python view_audit_logs.py recent 50        │  # Last 50 events
-│ python view_audit_logs.py process app.exe  │  # By process name
-│ python view_audit_logs.py export report.txt│  # Export to file
-└────────────────────────────────────────────┘
-
-Statistics Provided:
-✓ Total events
-✓ TPM usage percentage
-✓ Security level breakdown
-✓ Process breakdown (PID, name, count)
-✓ User breakdown
-✓ Success rate
-✓ Event type distribution
-```
-
-**Proof of TPM Usage:**
-
-When TPM is active (admin mode), logs show:
-```json
-{
-  "event_type": "tpm_seal",
-  "tpm_used": true,
-  "details": {
-    "pcr_indices": [0, 1, 2, 7],
-    "blob_size": 128,
-    "tpm_method": "wmi"
+    "token_size": 3502
   }
 }
 ```
 
-When TPM unavailable (standard mode), logs show:
-```json
-{
-  "event_type": "tpm_seal",
-  "tpm_used": false,
-  "details": {
-    "message": "Software seal used (TPM not available)"
-  }
-}
+**Capabilities:**
+- Process tracking: PID, name, user account
+- TPM usage verification: boolean + PCR indices
+- Security level classification: MAXIMUM/HIGH/MEDIUM/LOW
+- Event types: tpm_init, tpm_seal, tpm_unseal, token_issue, token_verify
+
+**Analysis tools:**
+```bash
+python view_audit_logs.py summary    # Overview statistics
+python view_audit_logs.py tpm        # TPM-specific events
+python view_audit_logs.py recent 50  # Last N events
+python view_audit_logs.py process sqlservr.exe  # By process
+python view_audit_logs.py export report.txt     # Export
 ```
 
-**Benefits:**
-- **Accountability**: Every operation traced to process and user
-- **Compliance**: Complete audit trail for regulatory requirements
-- **Forensics**: Investigation of security incidents
-- **Proof**: Irrefutable evidence of TPM usage (PCR values)
-- **Transparency**: Honest logging (no fake claims)
-
-**See [AUDIT_LOGGING_GUIDE.md](AUDIT_LOGGING_GUIDE.md) for complete documentation.**
-| **Zero-Day Protection** | Signature-based | Behavioral analysis + heuristics |
-| **Path Confinement** | Not available | Database writes restricted to data directories |
-
----
-
-## Platform Architecture
-
-### High-Level System Overview
-
-The platform implements a **defense-in-depth strategy** across multiple protection layers with integrated tri-factor authentication:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                          OPERATOR / ADMIN LAYER                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   CLI Tool   │  │  Python GUI  │  │ Web Dashboard│  │  REST/gRPC   │       │
-│  │  Manager.exe │  │   (tkinter)  │  │   (Flask)    │  │   Services   │       │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
-└─────────┼──────────────────┼──────────────────┼──────────────────┼──────────────┘
-          │                  │                  │                  │
-          └──────────────────┴──────────────────┴──────────────────┘
-                                     │
-                              IOCTL / IPC / gRPC
-                                     │
-┌─────────────────────────────────────┼───────────────────────────────────────────┐
-│              TRI-FACTOR AUTHENTICATION LAYER (NEW)                              │
-│  ┌──────────────────────────────────▼─────────────────────────────────────┐    │
-│  │           TriFactorAuthManager (trifactor_auth_manager.py)             │    │
-│  │  ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐ │    │
-│  │  │ TPM Manager     │ │ Device FP       │ │ PQC USB Authenticator    │ │    │
-│  │  │ - WMI access    │ │ - 6-8 layers    │ │ - Dilithium3             │ │    │
-│  │  │ - Seal/Unseal   │ │ - BLAKE2b hash  │ │ - 3309-byte sigs         │ │    │
-│  │  │ - PCR binding   │ │ - Deterministic │ │ - USB detection          │ │    │
-│  │  └─────────────────┘ └─────────────────┘ └──────────────────────────┘ │    │
-│  │  ┌──────────────────────────────────────────────────────────────────┐  │    │
-│  │  │ Audit Logger: .audit_logs/audit_YYYYMMDD.jsonl                   │  │    │
-│  │  │ - Process tracking (PID, name, user)                             │  │    │
-│  │  │ - TPM usage recording (true/false)                               │  │    │
-│  │  │ - Security level tracking (MAXIMUM/HIGH/MEDIUM/LOW/EMERGENCY)    │  │    │
-│  │  │ - Event types: tpm_init, tpm_seal, tpm_unseal, token_*, verify_*│  │    │
-│  │  └──────────────────────────────────────────────────────────────────┘  │    │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬────────────────────────────────────────────────┘
-                               │
-┌─────────────────────────────────────┼───────────────────────────────────────────┐
-│                    USER-MODE CONTROL PLANE (Ring 3)                             │
-│  ┌──────────────────────────────────▼─────────────────────────────────────┐    │
-│  │              RealAntiRansomwareManager_v2.cpp                           │    │
-│  │  ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐ │    │
-│  │  │  CryptoHelper   │ │  ProcessHelper  │ │ DatabaseProtectionPolicy │ │    │
-│  │  │  - SHA256       │ │  - Enum Procs   │ │  - Token Mgmt            │ │    │
-│  │  │  - Random Gen   │ │  - Find PID     │ │  - Path Validation       │ │    │
-│  │  │  - Hash Utils   │ │  - Service Det  │ │  - Expiry Checks         │ │    │
-│  │  └─────────────────┘ └─────────────────┘ └──────────────────────────┘ │    │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │                    Python Service Ecosystem                              │  │
-│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │  │
-│  │  │PolicyEngine  │ │ TokenBroker  │ │ HealthMonitor │ │ ServiceMgr   │   │  │
-│  │  │(YAML rules)  │ │(HSM/demo)    │ │(metrics)     │ │(Windows svc) │   │  │
-│  │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘   │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │              Data Persistence & Configuration                            │  │
-│  │  • SQLite: protection_db.sqlite, antiransomware.db                       │  │
-│  │  • YAML/JSON: config.yaml, policies/*.yaml, antiransomware_config.json  │  │
-│  │  • Logs: logs/antiransomware.log, .audit_logs/*.jsonl, Windows Event Log│  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬────────────────────────────────────────────────┘
-                               │ Filter Manager API
-                               │ Shared Memory / Events
-┌──────────────────────────────▼────────────────────────────────────────────────┐
-┌─────────────────────────────────────┼───────────────────────────────────────────┐
-│                    USER-MODE CONTROL PLANE (Ring 3)                             │
-│  ┌──────────────────────────────────▼─────────────────────────────────────┐    │
-│  │              RealAntiRansomwareManager_v2.cpp                           │    │
-│  │  ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐ │    │
-│  │  │  CryptoHelper   │ │  ProcessHelper  │ │ DatabaseProtectionPolicy │ │    │
-│  │  │  - SHA256       │ │  - Enum Procs   │ │  - Token Mgmt            │ │    │
-│  │  │  - Random Gen   │ │  - Find PID     │ │  - Path Validation       │ │    │
-│  │  │  - Hash Utils   │ │  - Service Det  │ │  - Expiry Checks         │ │    │
-│  │  └─────────────────┘ └─────────────────┘ └──────────────────────────┘ │    │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │                    Python Service Ecosystem                              │  │
-│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │  │
-│  │  │PolicyEngine  │ │ TokenBroker  │ │HealthMonitor │ │ ServiceMgr   │   │  │
-│  │  │(YAML rules)  │ │(HSM/demo)    │ │(metrics)     │ │(Windows svc) │   │  │
-│  │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘   │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │              Data Persistence & Configuration                            │  │
-│  │  • SQLite: protection_db.sqlite, antiransomware.db                       │  │
-│  │  • YAML/JSON: config.yaml, policies/*.yaml                               │  │
-│  │  • Logs: logs/antiransomware.log, Windows Event Log                      │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬────────────────────────────────────────────────┘
-                               │ Filter Manager API
-                               │ Shared Memory / Events
-┌──────────────────────────────▼────────────────────────────────────────────────┐
-│                    KERNEL PROTECTION LAYER (Ring 0)                            │
-│  ┌──────────────────────────────────────────────────────────────────────────┐ │
-│  │              RealAntiRansomwareDriver.c (Minifilter)                     │ │
-│  │  ┌────────────────────────────────────────────────────────────────────┐ │ │
-│  │  │                  IRP Interception Layer                            │ │ │
-│  │  │  • IRP_MJ_CREATE      → PreCreateOperation()                       │ │ │
-│  │  │  • IRP_MJ_WRITE       → PreWriteOperation()                        │ │ │
-│  │  │  • IRP_MJ_SET_INFO    → PreSetInformationOperation()               │ │ │
-│  │  │  • IRP_MJ_CLEANUP     → PostCleanupOperation()                     │ │ │
-│  │  └────────────────────────────────────────────────────────────────────┘ │ │
-│  │  ┌────────────────────────────────────────────────────────────────────┐ │ │
-│  │  │               Service Token Cache & Validation                     │ │ │
-│  │  │  • Token Store: PID → {hash, paths, expiry, counters}              │ │ │
-│  │  │  • FindServiceToken(PID) → TOKEN_ENTRY*                            │ │ │
-│  │  │  • ValidateServiceToken() → hash + path + expiry checks            │ │ │
-│  │  │  • ExpireTokens() → time-based cleanup                             │ │ │
-│  │  └────────────────────────────────────────────────────────────────────┘ │ │
-│  │  ┌────────────────────────────────────────────────────────────────────┐ │ │
-│  │  │            Access Decision Engine & Statistics                     │ │ │
-│  │  │  [ALLOW] Allow: valid token + path match + hash match                  │ │ │
-│  │  │  ❌ Deny: expired token / hash mismatch / path violation           │ │ │
-│  │  │  🚫 Block: suspicious patterns (rapid writes, DELETE_ON_CLOSE)    │ │ │
-│  │  │  [STATS] Counters: FilesBlocked, EncryptionAttempts, TokenValidations  │ │ │
-│  │  └────────────────────────────────────────────────────────────────────┘ │ │
-│  │  ┌────────────────────────────────────────────────────────────────────┐ │ │
-│  │  │                    IOCTL Command Handlers                          │ │ │
-│  │  │  0x800: SET_PROTECTION      → Enable/disable/monitor modes         │ │ │
-│  │  │  0x801: GET_STATUS          → Protection level & health            │ │ │
-│  │  │  0x803: GET_STATISTICS      → Counters & metrics                   │ │ │
-│  │  │  0x804: SET_DB_POLICY       → Configure database policy            │ │ │
-│  │  │  0x805: ISSUE_SERVICE_TOKEN → Prime token cache                    │ │ │
-│  │  │  0x806: REVOKE_SERVICE_TOKEN→ Remove token by PID                  │ │ │
-│  │  │  0x807: LIST_SERVICE_TOKENS → Enumerate active tokens              │ │ │
-│  │  └────────────────────────────────────────────────────────────────────┘ │ │
-│  └──────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────┬────────────────────────────────────────────────┘
-                               │ Windows I/O Manager
-                               │ NTFS / ReFS / FAT32
-┌──────────────────────────────▼────────────────────────────────────────────────┐
-│                    FILE SYSTEMS & PROTECTED ASSETS                             │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐            │
-│  │  Database Files  │  │  User Documents  │  │  System Files    │            │
-│  │  • SQL Server    │  │  • C:\Users\*    │  │  • C:\Windows\*  │            │
-│  │  • PostgreSQL    │  │  • Desktop       │  │  • Registry      │            │
-│  │  • Oracle        │  │  • Documents     │  │  • Boot files    │            │
-│  └──────────────────┘  └──────────────────┘  └──────────────────┘            │
-│  ┌──────────────────────────────────────────────────────────────────────────┐ │
-│  │                      Protected Directories                               │ │
-│  │  • protected/          → High-value files with strict policies           │ │
-│  │  • immune-folders/     → Read-only enforcement                           │ │
-│  │  • backups/            → Versioned snapshots for rollback                │ │
-│  │  • quarantine/         → Isolated threats                                │ │
-│  └──────────────────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Tri-Factor Authentication Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    TOKEN GENERATION & VERIFICATION FLOW                     │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-ISSUANCE (issue_trifactor_token):
-┌──────────────┐
-│ File Request │
-│  file_id     │
-└──────┬───────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. TPM Token Manager (if admin)                                 │
-│    └─ seal_token_to_platform()                                  │
-│       • Seals to PCRs [0,1,2,7]                                 │
-│       • Creates 128-byte TPM blob                               │
-│       • Audit log: tpm_seal with pcr_indices                    │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. Device Fingerprint                                           │
-│    └─ generate_fingerprint()                                    │
-│       • Collects 6-8 hardware layers                            │
-│       • BLAKE2b hash (32 bytes)                                 │
-│       • Deterministic (no timestamp)                            │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. PQC USB Authenticator                                        │
-│    └─ authenticate()                                            │
-│       • Detects removable USB drives                            │
-│       • Signs with Dilithium3 private key                       │
-│       • Returns 3309-byte signature                             │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. Combine & Encode                                             │
-│    • Base payload (file_id, timestamp, expiry)                  │
-│    • + TPM sealed blob (if available)                           │
-│    • + Device fingerprint hash                                  │
-│    • + PQC signature (if USB present)                           │
-│    • Encrypt with ChaCha20Poly1305                              │
-│    • Base64 encode                                              │
-│    • Audit log: token_issue with security level                 │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ Token: 3389-3500 bytes      │
-│ Security: MEDIUM-MAXIMUM    │
-└─────────────────────────────┘
-
-VERIFICATION (verify_trifactor_token):
-┌──────────────┐
-│ Token + File │
-└──────┬───────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. Decode & Decrypt                                             │
-│    • Base64 decode                                              │
-│    • ChaCha20Poly1305 decrypt                                   │
-│    • Extract components                                         │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. Verify Each Factor (if present)                              │
-│    ├─ TPM: unseal_token() → check platform state                │
-│    │       Audit log: tpm_unseal success/failure                │
-│    ├─ DeviceFP: compare current vs stored fingerprint           │
-│    │            Accept if match                                 │
-│    └─ USB: verify_signature() with Dilithium3 pubkey            │
-│           Check USB drive presence                              │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. Calculate Security Level                                     │
-│    • 3 factors = MAXIMUM (100)                                  │
-│    • 2 factors = HIGH/MEDIUM (80/60)                            │
-│    • 1 factor = LOW (40)                                        │
-│    • Audit log: token_verify with security level                │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-              ▼
-┌────────────────────────────────────────┐
-│ Result: VALID/INVALID                  │
-│ Factors: [TPM, DeviceFP, USB]          │
-│ Security: MAXIMUM/HIGH/MEDIUM/LOW      │
-└────────────────────────────────────────┘
-```
-
-### Key Architectural Principles
-
-1. **Defense in Depth**: Multiple independent protection layers (kernel + user-mode + behavioral + tri-factor auth)
-2. **Least Privilege**: Service tokens limit database writes to specific paths and time windows
-3. **Zero Trust**: Binary attestation + tri-factor authentication prevents process impersonation
-4. **Hardware Root of Trust**: TPM 2.0 provides cryptographic platform binding
-5. **Quantum Resistance**: Post-quantum cryptography for future-proof signatures
-6. **Fail-Safe**: Protection defaults to DENY on errors or suspicious patterns
-7. **Performance First**: Kernel-level optimizations keep overhead <5%
-8. **Observable**: Comprehensive metrics, logs, audit trails, and real-time statistics
-9. **Transparent**: Honest audit logging shows actual TPM usage (no fake claims)
-10. **Accountable**: Every operation traced to process, user, and security level
-
-### Layered Architecture Diagram
-
-```
-╔════════════════════════════════════════════════════════════════════════════════╗
-║  LAYER 5: PRESENTATION & ORCHESTRATION                                         ║
-║  ┌────────────┬────────────┬────────────┬────────────┐                         ║
-║  │ CLI Tools  │ Python GUI │ Web Portal │  REST API  │                         ║
-║  │ (C++ exe)  │ (tkinter)  │  (Flask)   │  (gRPC)    │                         ║
-║  └────────────┴────────────┴────────────┴────────────┘                         ║
-╠════════════════════════════════════════════════════════════════════════════════╣
-║  LAYER 4: APPLICATION LOGIC & POLICY                                           ║
-║  ┌─────────────────────────────────────────────────────────────────────┐       ║
-║  │ DatabaseProtectionPolicy │ PolicyEngine │ TokenBroker │ HealthMonitor│       ║
-║  │ • Token lifecycle        │ • YAML rules │ • HSM/demo  │ • Metrics    │       ║
-║  │ • Binary attestation     │ • Validation │ • Signing   │ • Alerts     │       ║
-║  │ • Path confinement       │ • Enforcement│ • Rotation  │ • Reporting  │       ║
-║  └─────────────────────────────────────────────────────────────────────┘       ║
-╠════════════════════════════════════════════════════════════════════════════════╣
-║  LAYER 3: USER-MODE SERVICES                                                   ║
-║  ┌──────────────────┬──────────────────┬──────────────────┐                    ║
-║  │ CryptoHelper     │ ProcessHelper    │ ServiceManager   │                    ║
-║  │ • SHA256         │ • Enumeration    │ • Windows svc    │                    ║
-║  │ • Random gen     │ • PID lookup     │ • Lifecycle mgmt │                    ║
-║  │ • Hash utils     │ • Service detect │ • Auto-start     │                    ║
-║  └──────────────────┴──────────────────┴──────────────────┘                    ║
-║  ┌──────────────────────────────────────────────────────────────────┐          ║
-║  │ Data Layer: SQLite, YAML, JSON, Logs, Backups, Quarantine        │          ║
-║  └──────────────────────────────────────────────────────────────────┘          ║
-╠════════════════════════════════════════════════════════════════════════════════╣
-║  LAYER 2: KERNEL-USER BOUNDARY (IOCTL Interface)                               ║
-║  ↕️ DeviceIoControl(\\.\AntiRansomwareFilter, IOCTL_*, ...)                    ║
-║  ↕️ Shared Memory, Events, Callbacks                                           ║
-╠════════════════════════════════════════════════════════════════════════════════╣
-║  LAYER 1: KERNEL PROTECTION (Ring 0)                                           ║
-║  ┌────────────────────────────────────────────────────────────────────┐        ║
-║  │ Minifilter Driver (RealAntiRansomwareDriver.sys)                   │        ║
-║  │ • Pre/Post operation callbacks                                     │        ║
-║  │ • Service token cache (lockless access)                            │        ║
-║  │ • Binary hash validation (in-kernel)                               │        ║
-║  │ • Path confinement enforcement                                     │        ║
-║  │ • Statistics aggregation                                           │        ║
-║  └────────────────────────────────────────────────────────────────────┘        ║
-╠════════════════════════════════════════════════════════════════════════════════╣
-║  LAYER 0: WINDOWS I/O STACK                                                    ║
-║  Filter Manager → I/O Manager → File System Drivers (NTFS/ReFS)                ║
-╚════════════════════════════════════════════════════════════════════════════════╝
-```
-
-### Component Interaction Map
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         DBA / Administrator                                 │
-└────────────┬────────────────────────────────────────────────────────────────┘
-             │
-             ▼ (1) configure-db sqlservr.exe C:\SQLData --hours 24
-┌────────────────────────────────────────────────────────────────────────────┐
-│  RealAntiRansomwareManager.exe (User Mode)                                 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ 1. ProcessHelper::FindProcessPath("sqlservr.exe")                   │   │
-│  │    → Resolves to C:\...\sqlservr.exe                                │   │
-│  │                                                                      │   │
-│  │ 2. CryptoHelper::CalculateFileSHA256(sqlservr.exe)                  │   │
-│  │    → Generates SHA256 hash (32 bytes)                               │   │
-│  │                                                                      │   │
-│  │ 3. Build DB_PROTECTION_POLICY struct:                               │   │
-│  │    - ProcessName: sqlservr.exe                                      │   │
-│  │    - ProcessPath: C:\...\sqlservr.exe                               │   │
-│  │    - DataDirectory: C:\SQLData                                      │   │
-│  │    - BinaryHash: [32 byte SHA256]                                   │   │
-│  │    - TokenDurationMs: 86400000 (24 hours)                           │   │
-│  │    - RequireServiceParent: TRUE                                     │   │
-│  │    - EnforcePathConfinement: TRUE                                   │   │
-│  │                                                                      │   │
-│  │ 4. DeviceIoControl(hDriver, IOCTL_AR_SET_DB_POLICY, ...)            │   │
-│  └──────────────────────────────┬───────────────────────────────────────┘   │
-└─────────────────────────────────┼───────────────────────────────────────────┘
-                                  │ IOCTL
-┌─────────────────────────────────▼───────────────────────────────────────────┐
-│  Kernel Driver (Ring 0)                                                     │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ DriverControl() handler for IOCTL_AR_SET_DB_POLICY                  │   │
-│  │                                                                      │   │
-│  │ 1. Validate policy structure                                        │   │
-│  │ 2. Store in global DatabasePolicy struct                            │   │
-│  │ 3. Log: "Database policy configured for sqlservr.exe"               │   │
-│  │ 4. Return STATUS_SUCCESS                                            │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-             ▼ (2) issue-token sqlservr.exe
-┌────────────────────────────────────────────────────────────────────────────┐
-│  RealAntiRansomwareManager.exe                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ 1. ProcessHelper::FindProcessID("sqlservr.exe") → PID 2468          │   │
-│  │                                                                      │   │
-│  │ 2. Verify process is running as service (optional)                  │   │
-│  │                                                                      │   │
-│  │ 3. Generate challenge (32 random bytes)                             │   │
-│  │                                                                      │   │
-│  │ 4. Request signature from hardware token / demo mode                │   │
-│  │    → UserSignature (64 bytes)                                       │   │
-│  │                                                                      │   │
-│  │ 5. Build SERVICE_TOKEN_REQUEST:                                     │   │
-│  │    - ProcessID: 2468                                                │   │
-│  │    - BinaryHash: [from policy]                                      │   │
-│  │    - AllowedPaths: {C:\SQLData, ...}                                │   │
-│  │    - DurationMs: 86400000                                           │   │
-│  │    - UserSignature: [64 bytes]                                      │   │
-│  │    - Challenge: [32 bytes]                                          │   │
-│  │                                                                      │   │
-│  │ 6. DeviceIoControl(hDriver, IOCTL_AR_ISSUE_SERVICE_TOKEN, ...)      │   │
-│  └──────────────────────────────┬───────────────────────────────────────┘   │
-└─────────────────────────────────┼───────────────────────────────────────────┘
-                                  │ IOCTL
-┌─────────────────────────────────▼───────────────────────────────────────────┐
-│  Kernel Driver                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ IssueServiceToken() handler                                         │   │
-│  │                                                                      │   │
-│  │ 1. Validate signature (demo mode: accept, prod: verify ECDSA)       │   │
-│  │                                                                      │   │
-│  │ 2. Create TOKEN_ENTRY in ServiceTokenCache:                         │   │
-│  │    - ProcessID: 2468                                                │   │
-│  │    - BinaryHash: [32 bytes]                                         │   │
-│  │    - IssuedTime: KeQuerySystemTime()                                │   │
-│  │    - ExpiryTime: IssuedTime + 86400000ms                            │   │
-│  │    - AllowedPaths: {C:\SQLData}                                     │   │
-│  │    - AccessCount: 0                                                 │   │
-│  │    - IsActive: TRUE                                                 │   │
-│  │                                                                      │   │
-│  │ 3. InterlockedIncrement(&Statistics.ServiceTokenValidations)        │   │
-│  │                                                                      │   │
-│  │ 4. Return STATUS_SUCCESS                                            │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-             ▼ (3) SQL Server writes to C:\SQLData\mydb.mdf
-┌────────────────────────────────────────────────────────────────────────────┐
-│  Application (sqlservr.exe PID 2468)                                       │
-│    CreateFile(C:\SQLData\mydb.mdf, GENERIC_WRITE, ...)                    │
-└────────────────────────────┬───────────────────────────────────────────────┘
-                             │ I/O Request Packet (IRP)
-┌────────────────────────────▼───────────────────────────────────────────────┐
-│  Filter Manager                                                            │
-│    → Dispatches to minifilter Pre-operation callbacks                     │
-└────────────────────────────┬───────────────────────────────────────────────┘
-                             │
-┌────────────────────────────▼───────────────────────────────────────────────┐
-│  RealAntiRansomwareDriver.sys                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ PreWriteOperation() callback                                        │   │
-│  │                                                                      │   │
-│  │ 1. Extract ProcessID from IRP → 2468                                │   │
-│  │                                                                      │   │
-│  │ 2. FindServiceToken(2468) → TOKEN_ENTRY*                            │   │
-│  │                                                                      │   │
-│  │ 3. Validate token:                                                  │   │
-│  │    [OK] Check expiry: ExpiryTime > CurrentTime                        │   │
-│  │    [OK] Check binary hash: CalculateProcessHash(2468) == StoredHash   │   │
-│  │    [OK] Check path: C:\SQLData\mydb.mdf starts with C:\SQLData        │   │
-│  │    [OK] Check IsActive: TRUE                                          │   │
-│  │                                                                      │   │
-│  │ 4. All checks passed:                                               │   │
-│  │    - InterlockedIncrement(&Token->AccessCount)                      │   │
-│  │    - InterlockedIncrement(&Statistics.ServiceTokenValidations)      │   │
-│  │    - Return FLT_PREOP_SUCCESS_NO_CALLBACK (allow I/O)               │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└────────────────────────────┬───────────────────────────────────────────────┘
-                             │ Allowed
-┌────────────────────────────▼───────────────────────────────────────────────┐
-│  NTFS Driver                                                               │
-│    Writes data to C:\SQLData\mydb.mdf                                     │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                         Operator / Automation Layer                        │
-│  - CLI (RealAntiRansomwareManager.exe)                                     │
-│  - Python GUI, Web Dashboard, gRPC/REST services                           │
-└──────────────┬─────────────────────────────────────────────────────────────┘
-               │ IOCTL, gRPC, REST, local IPC
-┌──────────────▼─────────────────────────────────────────────────────────────┐
-│                   User-Mode Control Plane (Ring 3)                         │
-│  • DatabaseProtectionPolicy, CryptoHelper, ProcessHelper                   │
-│  • Policy engine, token broker, health monitor                             │
-│  • Data stores: SQLite (`protection_db.sqlite`), YAML/JSON configs         │
-└──────────────┬─────────────────────────────────────────────────────────────┘
-               │ Filter manager callbacks, shared memory, events
-┌──────────────▼─────────────────────────────────────────────────────────────┐
-│                      Kernel Protection Layer (Ring 0)                      │
-│  • Minifilter driver (`RealAntiRansomwareDriver.c`)                        │
-│  • IRP interception (CREATE/WRITE/SET_INFO)                                │
-│  • Token cache, binary hash validation, path confinement                   │
-└──────────────┬─────────────────────────────────────────────────────────────┘
-               │ Windows I/O stack                                          
-┌──────────────▼─────────────────────────────────────────────────────────────┐
-│                        File Systems & Protected Assets                     │
-│  • SQL Server, PostgreSQL, Oracle, backups                                 │
-│  • Regulated folders (immune-folders/, protected/)                         │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Database Token Enforcement Diagram
-
-```
- Step 1          Step 2            Step 3             Step 4             Step 5
- ┌──────┐  calc-hash + policy  issue-token      IOCTL dispatch    runtime enforcement
- │ DBA  │────────────────────▶│ Manager │───────────────────────▶│ Driver │──────────┐
- └──────┘                     └─────────┘                        └────────┘          │
-      ▲                            │                                     │            │
-      │ configure-db (--hours)     │ writes SERVICE_TOKEN_REQUEST        │            │
-      │                            │ challenge signed (demo or hardware) │            ▼
-      │                            ▼                                     │      Allowed paths
- ┌─────────────┐       Token cache seeded (PID ↔ token)                   │   + binary hash
- │ Data Store  │◀─────────────────────────────────────────────────────────┘   + expiry window
- └─────────────┘
- Outcome: database writes succeed only when PID + binary hash + path confinement all match.
-```
-
-### Python Threat Operations Diagram
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Python GUI (`Python-Version/antiransomware_python.py`)               │
-├────────────────┬──────────────────────────────┬─────────────────────┤
-│ Control Layer  │ Monitoring Layer             │ Response Layer      │
-│ - tk/ttk GUI   │ - File watchers (watchdog)   │ - Quarantine mgr    │
-│ - CLI options  │ - Process/registry monitors  │ - Backup/rollback   │
-│ - Settings UI  │ - Network/USB telemetry      │ - Alerting & logs   │
-├────────────────┴──────────────┬───────────────┴─────────────────────┤
-│ Shared Services               │ Persistence & Logs                  │
-│ - Policy engine (`policy_engine.py`)                                 │
-│ - Token broker (`broker.py`, `ar_token.py`)                          │
-│ - Health monitor (`health_monitor.py`)                               │
-│ - Service manager (`service_manager.py`)                             │
-│ - APIs (REST/gRPC in `enterprise_service.py`)                        │
-├───────────────────────────────┴──────────────────────────────────────┤
-│ Storage: SQLite (`protection_db.sqlite`), logs/, quarantine/, backups/ │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-### Threat Detection Pipeline Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         INPUT LAYER - Monitoring Sources                    │
-├──────────────┬──────────────┬──────────────┬──────────────┬────────────────┤
-│ File Monitor │ Process Mon  │ Registry Mon │ Network Mon  │ USB Monitor    │
-│ - Create     │ - Spawns     │ - Key writes │ - DNS queries│ - Device plug  │
-│ - Write      │ - Injections │ - Persistence│ - C2 beacons │ - File xfer    │
-│ - Delete     │ - Elevation  │ - Startup    │ - Data exfil │ - Auth tokens  │
-│ - Rename     │ - Token theft│ - Services   │ - Port scans │ - HID emulation│
-└──────┬───────┴──────┬───────┴──────┬───────┴──────┬───────┴────────┬───────┘
-       │              │              │              │                │
-       └──────────────┴──────────────┴──────────────┴────────────────┘
-                                      │
-                      ┌───────────────▼───────────────┐
-                      │   CORRELATION ENGINE          │
-                      │  - Event aggregation          │
-                      │  - Time-series analysis       │
-                      │  - Cross-source correlation   │
-                      │  - Pattern matching           │
-                      └───────────────┬───────────────┘
-                                      │
-       ┌──────────────┬───────────────┼───────────────┬────────────────┐
-       │              │               │               │                │
-┌──────▼──────┐ ┌─────▼─────┐ ┌──────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
-│ Signature   │ │ Heuristic │ │ Behavioral  │ │ ML Anomaly  │ │ IoC Lookup  │
-│ Detection   │ │ Analysis  │ │ Analysis    │ │ Detection   │ │ (YARA/STIX) │
-│             │ │           │ │             │ │             │ │             │
-│ • Known bad │ │ • Entropy │ │ • Rapid I/O │ │ • Deviation │ │ • Hash repo │
-│ • Hash DB   │ │ • Packing │ │ • Shadow del│ │ • Clustering│ │ • Domain rep│
-│ • String    │ │ • Obfuscat│ │ • Cred theft│ │ • Outliers  │ │ • IP blocks │
-│   patterns  │ │ • API seq │ │ • Lateral mv│ │ • Time-based│ │ • File names│
-└──────┬──────┘ └─────┬─────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘
-       │              │               │               │                │
-       └──────────────┴───────────────┴───────────────┴────────────────┘
-                                      │
-                      ┌───────────────▼───────────────┐
-                      │    THREAT SCORING ENGINE      │
-                      │  • Risk calculation (0-100)   │
-                      │  • Confidence weighting       │
-                      │  • False positive filtering   │
-                      │  • Context enrichment         │
-                      └───────────────┬───────────────┘
-                                      │
-                   ┌──────────────────┼──────────────────┐
-                   │                  │                  │
-            ┌──────▼──────┐   ┌───────▼────────┐ ┌──────▼──────┐
-            │ Score < 40  │   │ Score 40-70    │ │ Score > 70  │
-            │  MONITOR    │   │    ALERT       │ │   BLOCK     │
-            └──────┬──────┘   └───────┬────────┘ └──────┬──────┘
-                   │                  │                  │
-       ┌───────────┴──────────────────┴──────────────────┴───────────┐
-       │                    RESPONSE LAYER                            │
-       ├──────────────┬──────────────┬──────────────┬────────────────┤
-       │ Log & Audit  │ Quarantine   │ Block I/O    │ Alert & Report │
-       │ - Event log  │ - Move file  │ - Deny write │ - Email/SMS    │
-       │ - SIEM feed  │ - Process    │ - Kill proc  │ - Dashboard    │
-       │ - Forensics  │   suspend    │ - Net cutoff │ - Ticket       │
-       └──────────────┴──────────────┴──────────────┴────────────────┘
-```
-
-### Token Lifecycle State Machine
-
-```
-                            ┌────────────────────────┐
-                            │   TOKEN_NOT_ISSUED     │
-                            │  (Service not started) │
-                            └───────────┬────────────┘
-                                        │
-                        configure-db + issue-token command
-                                        │
-                            ┌───────────▼────────────┐
-                            │    TOKEN_PENDING       │
-                            │  (Request submitted)   │
-                            └───────────┬────────────┘
-                                        │
-                    ┌───────────────────┼───────────────────┐
-                    │ Success           │                   │ Failure
-                    │ (PCR valid +      │                   │ (Admin denied,
-                    │  TPM available)   │                   │  invalid hash)
-                    │                   │                   │
-        ┌───────────▼────────────┐      │      ┌───────────▼────────────┐
-        │   TOKEN_ACTIVE         │      │      │   TOKEN_REJECTED       │
-        │ (Kernel cache loaded)  │      │      │ (Not cached, blocked)  │
-        └───────────┬────────────┘      │      └────────────────────────┘
-                    │                   │
-        ┌───────────┼───────────┐       │
-        │           │           │       │
-        │ I/O ops   │ Periodic  │       │ Manual revoke
-        │ succeed   │ renewal   │       │ or expiry
-        │           │           │       │
-┌───────▼───┐   ┌───▼────┐  ┌──▼───────▼────────┐
-│TOKEN_VALID│   │ TOKEN_ │  │ TOKEN_EXPIRED     │
-│(I/O allow)│   │RENEWD  │  │ (TTL exceeded)    │
-└───────┬───┘   └───┬────┘  └──────────┬────────┘
-        │           │                   │
-        └───────────┘                   │
-                │                       │ Auto-cleanup
-                │                       │ (background)
-                └───────────┬───────────┘
-                            │
-                ┌───────────▼────────────┐
-                │   TOKEN_REVOKED        │
-                │ (Removed from cache)   │
-                └────────────────────────┘
-
-State Transitions:
-• NOT_ISSUED → PENDING: configure-db + issue-token
-• PENDING → ACTIVE: Successful validation (PCR + TPM + hash)
-• PENDING → REJECTED: Invalid credentials or missing admin
-• ACTIVE → VALID: I/O operations pass validation
-• ACTIVE → RENEWED: Periodic refresh before expiry
-• ACTIVE → EXPIRED: TTL window exceeded (default 24h)
-• EXPIRED → REVOKED: Auto-cleanup or manual revoke
-• ACTIVE → REVOKED: Manual revoke-token command
-
-Token Properties per State:
-• ACTIVE/VALID/RENEWED: Full I/O access, PCR-bound, audit logged
-• PENDING: No I/O access, awaiting kernel cache update
-• EXPIRED: I/O denied, grace period for renewal (5 min)
-• REJECTED/REVOKED: Immediate I/O denial, kernel cache cleared
-```
-
-### Kernel-User Communication Flow
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         USER MODE (Ring 3)                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐   │
-│  │ CLI Manager      │     │ Python GUI       │     │ Service Daemon   │   │
-│  │ (.exe)           │     │ (tkinter/Flask)  │     │ (background)     │   │
-│  └────────┬─────────┘     └────────┬─────────┘     └────────┬─────────┘   │
-│           │                        │                        │             │
-│           └────────────────────────┼────────────────────────┘             │
-│                                    │                                       │
-│                    ┌───────────────▼───────────────┐                       │
-│                    │   Control Interface Layer     │                       │
-│                    │  • DeviceIoControl() wrapper  │                       │
-│                    │  • IOCTL marshaling           │                       │
-│                    │  • Response parsing           │                       │
-│                    └───────────────┬───────────────┘                       │
-│                                    │                                       │
-└────────────────────────────────────┼───────────────────────────────────────┘
-                                     │
-                     IOCTL Commands (CreateFile → DeviceIoControl)
-                                     │
-        ┌────────────────────────────┼────────────────────────────┐
-        │ 0x804 - Issue Token        │ 0x805 - Revoke Token       │
-        │ 0x806 - Query Stats        │ 0x807 - Set Policy         │
-        └────────────────────────────┼────────────────────────────┘
-                                     │
-┌────────────────────────────────────┼───────────────────────────────────────┐
-│                                    │          KERNEL MODE (Ring 0)         │
-├────────────────────────────────────▼───────────────────────────────────────┤
-│                                                                             │
-│                    ┌────────────────────────────────┐                       │
-│                    │  Driver Dispatch Handler       │                       │
-│                    │  • DriverEntry() registration  │                       │
-│                    │  • IRP_MJ_DEVICE_CONTROL       │                       │
-│                    │  • Input buffer validation     │                       │
-│                    └───────────────┬────────────────┘                       │
-│                                    │                                        │
-│               ┌────────────────────┼────────────────────┐                   │
-│               │                    │                    │                   │
-│   ┌───────────▼──────────┐  ┌──────▼──────┐  ┌────────▼────────┐          │
-│   │ Token Cache Manager  │  │ Policy Engine│  │ Stats Collector │          │
-│   │ • Add/Remove tokens  │  │ • Path rules │  │ • Counters      │          │
-│   │ • PID→Token lookup   │  │ • Hash check │  │ • Event logs    │          │
-│   │ • Expiry validation  │  │ • Time window│  │ • Anomaly flags │          │
-│   └───────────┬──────────┘  └──────┬───────┘  └────────┬────────┘          │
-│               │                    │                    │                   │
-│               └────────────────────┼────────────────────┘                   │
-│                                    │                                        │
-│                    ┌───────────────▼────────────────┐                       │
-│                    │   Minifilter Framework         │                       │
-│                    │  • FltRegisterFilter()         │                       │
-│                    │  • Pre/Post operation callbacks│                       │
-│                    │  • Context management          │                       │
-│                    └───────────────┬────────────────┘                       │
-│                                    │                                        │
-│        ┌───────────────────────────┼───────────────────────────┐            │
-│        │                           │                           │            │
-│  ┌─────▼─────┐          ┌──────────▼─────────┐     ┌──────────▼─────┐     │
-│  │IRP_MJ_    │          │IRP_MJ_WRITE        │     │IRP_MJ_SET_     │     │
-│  │CREATE     │          │• Entropy check     │     │INFORMATION     │     │
-│  │• Token    │          │• Rate limiting     │     │• Rename/delete │     │
-│  │  lookup   │          │• Size validation   │     │• Suspicious ops│     │
-│  │• Path     │          │• Binary hash verify│     │• Shadow copy   │     │
-│  │  match    │          └────────────────────┘     └────────────────┘     │
-│  └───────────┘                                                             │
-│                                                                             │
-│                    ┌────────────────────────────────┐                       │
-│                    │   File System Stack (NTFS)     │                       │
-│                    │  • Actual I/O operations       │                       │
-│                    │  • Disk writes                 │                       │
-│                    └────────────────────────────────┘                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-Communication Mechanisms:
-┌────────────────────┬──────────────────────────────────────────────────────┐
-│ Mechanism          │ Usage                                                │
-├────────────────────┼──────────────────────────────────────────────────────┤
-│ IOCTL (sync)       │ CLI commands: issue/revoke token, query stats        │
-│ Shared Memory      │ Large data transfers (policy files, token lists)     │
-│ Event Callbacks    │ Minifilter pre/post operation hooks (I/O intercept)  │
-│ Completion Ports   │ Async I/O notifications from kernel to user          │
-│ ETW Events         │ Structured logging (Windows Event Tracing)           │
-│ Fast I/O           │ Bypasses IRP for performance-critical paths          │
-└────────────────────┴──────────────────────────────────────────────────────┘
-```
-
-### Deployment Topologies
-
-#### Single-Host Setup (SMB/Small Enterprise)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Windows Server/Desktop                    │
-│                                                                  │
-│  ┌────────────────────┐         ┌────────────────────┐          │
-│  │ Application Layer  │         │ Database Services  │          │
-│  │ - Web Server       │◀────────┤ - SQL Server       │          │
-│  │ - File Server      │  Token  │ - PostgreSQL       │          │
-│  │ - App Services     │         │ - Oracle           │          │
-│  └──────────┬─────────┘         └─────────┬──────────┘          │
-│             │                             │                     │
-│             │      ┌──────────────────────┘                     │
-│             │      │                                            │
-│  ┌──────────▼──────▼────────────────────────────────┐           │
-│  │     Anti-Ransomware Protection Layer             │           │
-│  │  ┌────────────────┐    ┌──────────────────────┐  │           │
-│  │  │ User Mode      │    │ Kernel Minifilter    │  │           │
-│  │  │ - Manager CLI  │◀───┤ - IRP interception   │  │           │
-│  │  │ - Python GUI   │    │ - Token validation   │  │           │
-│  │  │ - Token broker │    │ - Path enforcement   │  │           │
-│  │  └────────────────┘    └──────────────────────┘  │           │
-│  └───────────────────────────────────────────────────┘           │
-│                             │                                    │
-│  ┌──────────────────────────▼─────────────────────────┐          │
-│  │ Protected Assets                                   │          │
-│  │ - C:\SQLData\, D:\Backups\, E:\FileShares\         │          │
-│  │ - immune-folders/, protected/                      │          │
-│  └────────────────────────────────────────────────────┘          │
-└─────────────────────────────────────────────────────────────────┘
-
-Characteristics:
-• Single point of administration
-• Local token issuance and validation
-• Direct kernel-user communication
-• Suitable for: Workstations, small servers, dev/test environments
-```
-
-#### Enterprise Multi-Tier (Centralized Management)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Management Tier (DMZ)                               │
-│  ┌────────────────────────────────────────────────────────────────────┐     │
-│  │ Central Management Console                                         │     │
-│  │ • Web Dashboard (admin_dashboard.py)                               │     │
-│  │ • Policy Distribution Service                                      │     │
-│  │ • Token Broker (gRPC/REST APIs)                                    │     │
-│  │ • Audit Log Aggregator (SIEM integration)                          │     │
-│  │ • Health Monitor (alerting, metrics)                               │     │
-│  └─────────────────────────────┬──────────────────────────────────────┘     │
-└─────────────────────────────────┼──────────────────────────────────────────┘
-                                  │ gRPC (50051) / REST (8080)
-                                  │ TLS 1.3 + mutual auth
-                ┌─────────────────┼─────────────────┐
-                │                 │                 │
-┌───────────────▼────┐  ┌─────────▼────────┐  ┌────▼───────────────┐
-│  Database Tier     │  │  Application Tier │  │  File Server Tier  │
-│  ┌──────────────┐  │  │  ┌──────────────┐ │  │  ┌──────────────┐  │
-│  │ SQL Server   │  │  │  │ Web Apps     │ │  │  │ SMB/NFS      │  │
-│  │ PostgreSQL   │  │  │  │ API Services │ │  │  │ DFS-R        │  │
-│  │ Oracle       │  │  │  │ Microservices│ │  │  │ File Shares  │  │
-│  └──────┬───────┘  │  │  └──────┬───────┘ │  │  └──────┬───────┘  │
-│         │          │  │         │         │  │         │          │
-│  ┌──────▼────────┐ │  │  ┌──────▼───────┐ │  │  ┌──────▼────────┐ │
-│  │ Anti-Ransom   │ │  │  │ Anti-Ransom  │ │  │  │ Anti-Ransom   │ │
-│  │ Agent         │ │  │  │ Agent        │ │  │  │ Agent         │ │
-│  │ • Kernel drv  │ │  │  │ • Kernel drv │ │  │  │ • Kernel drv  │ │
-│  │ • Local mgr   │ │  │  │ • Local mgr  │ │  │  │ • Local mgr   │ │
-│  │ • gRPC client │ │  │  │ • gRPC client│ │  │  │ • gRPC client │ │
-│  └───────────────┘ │  │  └──────────────┘ │  │  └───────────────┘ │
-└────────────────────┘  └──────────────────┘  └────────────────────┘
-
-Data Flows:
-• Policy push: Management → Agents (YAML/JSON configs)
-• Token requests: Agent → Management → Token Broker → Agent
-• Audit logs: Agent → Management (aggregated, forwarded to SIEM)
-• Health checks: Agent → Management (heartbeat, stats)
-• Alerts: Agent → Management → Email/SMS/Ticket system
-
-Characteristics:
-• Centralized policy management
-• Remote token issuance with TPM-backed credentials
-• Cross-tier audit log aggregation
-• Suitable for: 10+ servers, compliance requirements, multi-site
-```
-
-#### High-Availability Setup (Enterprise Critical Systems)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Load Balancer / API Gateway                            │
-│                        (HAProxy, F5, Azure LB)                              │
-└──────────────────────┬────────────────────┬─────────────────────────────────┘
-                       │                    │
-       ┌───────────────┼────────────────────┼───────────────┐
-       │               │                    │               │
-┌──────▼──────┐ ┌──────▼──────┐     ┌──────▼──────┐ ┌──────▼──────┐
-│ Management  │ │ Management  │     │ Token Broker│ │ Token Broker│
-│ Console #1  │ │ Console #2  │     │ Cluster #1  │ │ Cluster #2  │
-│ (Active)    │ │ (Standby)   │     │ (Active)    │ │ (Standby)   │
-└──────┬──────┘ └──────┬──────┘     └──────┬──────┘ └──────┬──────┘
-       │               │                    │               │
-       └───────────────┼────────────────────┼───────────────┘
-                       │                    │
-                       │    ┌───────────────┘
-                       │    │
-                ┌──────▼────▼──────┐
-                │  Shared Storage  │
-                │  - Config DB     │
-                │  - Token Cache   │
-                │  - Audit Logs    │
-                │  (SQL AlwaysOn,  │
-                │   Redis cluster) │
-                └──────┬───────────┘
-                       │
-         ┌─────────────┼─────────────┐
-         │             │             │
-┌────────▼────────┐ ┌──▼──────────┐ ┌▼────────────────┐
-│ Protected Tier 1│ │ Protected   │ │ Protected Tier N│
-│ (DB Cluster)    │ │ Tier 2      │ │ (File Cluster)  │
-│ ┌──────────────┐│ │ (App Nodes) │ │ ┌──────────────┐│
-│ │ SQL #1       ││ │ ┌─────────┐ │ │ │ FileServer #1││
-│ │ SQL #2 (rep) ││ │ │ App #1  │ │ │ │ FileServer #2││
-│ └──────────────┘│ │ │ App #2  │ │ │ └──────────────┘│
-│ ┌──────────────┐│ │ │ App #3  │ │ │ ┌──────────────┐│
-│ │Anti-Ransom   ││ │ └─────────┘ │ │ │Anti-Ransom   ││
-│ │Agents (HA)   ││ │ ┌─────────┐ │ │ │Agents (HA)   ││
-│ └──────────────┘│ │ │Anti-Rans│ │ │ └──────────────┘│
-└─────────────────┘ │ │om Agents│ │ └─────────────────┘
-                    │ └─────────┘ │
-                    └─────────────┘
-
-Redundancy Features:
-• Active-standby management consoles with automatic failover
-• Token broker cluster (Redis Sentinel, SQL AlwaysOn)
-• Shared storage for config/cache (replicated across sites)
-• Agent-side caching for resilience during management outages
-• Health checks & auto-recovery (Keepalived, Pacemaker)
-• Geographic distribution (DR site with async replication)
-
-Failure Scenarios:
-• Management console down: Standby promoted within 30s
-• Token broker unavailable: Agents use cached tokens (grace period)
-• Network partition: Agents continue with last-known-good policy
-• Database failover: Automatic replica promotion, < 5s downtime
-```
-
-### Data Flow Architecture with Security Zones
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          UNTRUSTED ZONE                                     │
-│  ┌───────────┐    ┌───────────┐    ┌───────────┐    ┌───────────┐          │
-│  │ Internet  │    │ External  │    │ Public    │    │ User      │          │
-│  │ Traffic   │────│ Firewall  │────│ Web Apps  │────│ Requests  │          │
-│  └───────────┘    └───────────┘    └─────┬─────┘    └───────────┘          │
-└─────────────────────────────────────────┼──────────────────────────────────┘
-                                          │ HTTP/HTTPS (TLS 1.3)
-                                          │ WAF filtering
-┌─────────────────────────────────────────┼──────────────────────────────────┐
-│                          DMZ / PERIMETER ZONE                               │
-│                     ┌────────────────────▼─────────────────────┐            │
-│                     │ Application Gateway / Reverse Proxy      │            │
-│                     │ • Request sanitization                   │            │
-│                     │ • Rate limiting                          │            │
-│                     │ • DDoS protection                        │            │
-│                     └────────────────────┬─────────────────────┘            │
-│                                          │                                  │
-│                     ┌────────────────────▼─────────────────────┐            │
-│                     │ Anti-Ransomware Management Console       │            │
-│                     │ • Token issuance gateway                 │            │
-│                     │ • Policy distribution                    │            │
-│                     │ • Audit log collector                    │            │
-│                     └────────────────────┬─────────────────────┘            │
-└─────────────────────────────────────────┼──────────────────────────────────┘
-                                          │ gRPC/REST (mutual TLS)
-                                          │ Certificate pinning
-┌─────────────────────────────────────────┼──────────────────────────────────┐
-│                        INTERNAL APPLICATION ZONE                            │
-│  ┌────────────────────┐    ┌────────────▼───────────┐    ┌──────────────┐  │
-│  │ Web Services       │    │ Business Logic Tier    │    │ API Gateway  │  │
-│  │ • IIS/Apache       │◀───┤ • .NET/Java apps       │◀───┤ • Auth proxy │  │
-│  │ • App servers      │    │ • Microservices        │    │ • Token val  │  │
-│  └──────────┬─────────┘    └────────────┬───────────┘    └──────────────┘  │
-│             │                           │                                   │
-│  ┌──────────▼───────────────────────────▼───────────────┐                  │
-│  │       Anti-Ransomware Protection Layer (User Mode)   │                  │
-│  │  • Process monitoring & token verification           │                  │
-│  │  • Behavioral analysis (I/O patterns)                │                  │
-│  │  • Network anomaly detection                         │                  │
-│  └──────────┬───────────────────────────────────────────┘                  │
-│             │ IOCTL / Filter Manager                                        │
-│  ┌──────────▼───────────────────────────────────────────┐                  │
-│  │   Anti-Ransomware Kernel Driver (Ring 0)             │                  │
-│  │  • IRP interception (CREATE/WRITE/SET_INFO)          │                  │
-│  │  • Token cache validation                            │                  │
-│  │  • Path confinement enforcement                      │                  │
-│  └──────────┬───────────────────────────────────────────┘                  │
-└─────────────┼────────────────────────────────────────────────────────────┘
-              │ File system I/O
-┌─────────────┼────────────────────────────────────────────────────────────┐
-│             │          DATA / DATABASE ZONE (Restricted)                   │
-│  ┌──────────▼──────────┐    ┌─────────────────┐    ┌──────────────────┐  │
-│  │ SQL Server Cluster  │    │ PostgreSQL      │    │ Oracle Databases │  │
-│  │ • Production DBs    │    │ • Analytics DBs │    │ • Legacy systems │  │
-│  │ • Encrypted at rest │    │ • TDE enabled   │    │ • Audit trails   │  │
-│  └──────────┬──────────┘    └────────┬────────┘    └────────┬─────────┘  │
-│             │                        │                       │            │
-│  ┌──────────▼────────────────────────▼───────────────────────▼─────────┐  │
-│  │            Physical Storage (Protected Assets)                      │  │
-│  │  • C:\SQLData\, D:\Backups\, E:\Archives\                           │  │
-│  │  • immune-folders/ (read-only), protected/ (whitelisted)            │  │
-│  │  • BitLocker encryption, NTFS ACLs                                  │  │
-│  └─────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-Security Boundaries & Controls:
-┌──────────────────┬──────────────────────────────────────────────────────────┐
-│ Boundary         │ Controls                                                 │
-├──────────────────┼──────────────────────────────────────────────────────────┤
-│ Untrusted → DMZ  │ Firewall, IPS/IDS, WAF, DDoS protection                  │
-│ DMZ → Internal   │ Mutual TLS, certificate pinning, gRPC auth               │
-│ Internal → Data  │ Token validation, path confinement, kernel driver        │
-│ Data → Storage   │ ACLs, encryption (TDE, BitLocker), audit logging         │
-└──────────────────┴──────────────────────────────────────────────────────────┘
-
-Data Classification:
-• Red (Critical): Database files, backups, crypto keys
-• Orange (Sensitive): Config files, logs, audit trails
-• Yellow (Internal): App binaries, user data, temp files
-• Green (Public): Static web content, documentation
-
-Trust Model:
-• Zero-trust within Internal zone (all processes require tokens)
-• Least-privilege (minimal ACLs, service accounts with limited scope)
-• Defense-in-depth (multiple layers: network, host, kernel, filesystem)
-• Continuous verification (token expiry, periodic re-auth, health checks)
-```
-
-## Component Breakdown
-
-**Kernel Minifilter (`RealAntiRansomwareDriver.c`)**
-- Hooks `IRP_MJ_CREATE`, `IRP_MJ_WRITE`, `IRP_MJ_SET_INFORMATION` to stop encryption at the filesystem boundary.
-- Maintains service-token cache (PID, expiry, allowed paths, binary hash) and exposes IOCTLs (`0x804`–`0x807`).
-- Enforces path confinement, size limits, and flags suspicious delete-on-close or rapid-write sequences in driver statistics.
-
-**Manager & CLI (`RealAntiRansomwareManager_v2.cpp`)**
-- Implements `CryptoHelper`, `ProcessHelper`, and `DatabaseProtectionPolicy` to build policies from operator intent.
-- Provides commands: `install`, `enable`, `status`, `configure-db`, `issue-token`, `list-tokens`, `revoke-token`, `calc-hash` (see [Usage](#usage--operations)).
-- Handles driver install/uninstall through `setupapi` + `newdev`, signs IOCTL payloads, and prints real-time stats.
-
-**Python Suite (`Python-Version/`, `admin_dashboard.py`, `service_manager.py`)**
-- tkinter GUI with multi-tab control surface, quarantine UI, settings, USB auth, and full log viewer.
-- `service_manager.py` turns the stack into a Windows service, spawns the web dashboard, health checks, and token broker.
-- CLI helpers: `policy_engine.py`, `health_monitor.py`, `deployment.py`, `kernel_driver_manager.py` for automation and CI.
-
-**Shared Assets**
-- Configs: `config.yaml`, `config.json`, `policies/*.yaml` for policy-driven deployments.
-- Diagnostics: `check.ps1`, `build/*.bat`, `POPUP_FIX.md`, `BUILD_FIX.md`, `QUICKSTART.md`.
-- Data: `protected/`, `immune-folders/`, `logs/`, `backups/`, `quarantine/`.
-
-## Build & Installation
+## Build Instructions
 
 ### Prerequisites
 
-| Layer | Requirements |
-|-------|--------------|
-| Kernel + Manager | Windows 10/11 x64, **Visual Studio 2022** with *Desktop development with C++*, **WDK 10**, Administrator shell, test-signing enabled, 8 GB RAM |
-| Python Suite | Python 3.10+ (3.11.9 verified), `pip`, ability to install `psutil`, `wmi`, `pywin32`, optional virtualenv |
+**System requirements:**
+- Windows 10/11 x64
+- 8GB RAM minimum
+- Administrator privileges
 
-> ℹ️ Run `powershell -ExecutionPolicy Bypass -File .\check.ps1` to verify toolchains. If it reports missing C++ Standard Library, open **Visual Studio Installer → Modify → Workloads → Desktop development with C++**.
+**Development tools:**
+- Visual Studio 2022 (Desktop development with C++)
+- Windows Driver Kit (WDK) 10
+- Python 3.10+ (3.11.9 tested)
 
-### Build Manager (User-Mode)
+**Verification:**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\check.ps1
+```
+
+### Kernel Driver
 
 ```powershell
 # VS Developer Command Prompt (x64), elevated
-cd C:\Users\ajibi\Music\Anti-Ransomeware
-cl /std:c++17 /O2 /EHsc RealAntiRansomwareManager_v2.cpp ^
-   setupapi.lib newdev.lib cfgmgr32.lib crypt32.lib advapi32.lib ^
-   /Fe:RealAntiRansomwareManager.exe
-```
-
-### Build Driver (Kernel Minifilter)
-
-```powershell
-# WDK Free Build Env or VS Developer Cmd
 msbuild RealAntiRansomwareDriver.vcxproj /p:Configuration=Release /p:Platform=x64
 
-# Sign for test mode
+# Test signing
 makecert -r -pe -ss PrivateCertStore -n "CN=TestDriverCert" TestCert.cer
 signtool sign /s PrivateCertStore /n "TestDriverCert" RealAntiRansomwareDriver.sys
 ```
 
-Enable Windows test-signing once per host:
-
+**Enable test signing:**
 ```powershell
 bcdedit /set testsigning on
 shutdown /r /t 0
 ```
 
-### Python Environment
+### User-Mode Manager
 
 ```powershell
-cd C:\Users\ajibi\Music\Anti-Ransomeware\Python-Version
-python -m venv ..\.venv
-..\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt  # psutil, wmi, pywin32, flask, etc.
-python antiransomware_python.py --gui
+cl /std:c++17 /O2 /EHsc RealAntiRansomwareManager_v2.cpp ^
+   setupapi.lib newdev.lib cfgmgr32.lib crypt32.lib advapi32.lib ^
+   /Fe:RealAntiRansomwareManager.exe
 ```
 
-## Usage & Operations
-
-### Kernel/Manager Workflow
-
-1. **Install driver**: `RealAntiRansomwareManager.exe install`
-2. **Enable protection**: `RealAntiRansomwareManager.exe enable` (`maximum` for aggressive mode)
-3. **Configure database policy**: `RealAntiRansomwareManager.exe configure-db sqlservr.exe "C:\SQLData" --hours 24`
-4. **Issue token**: ensure process running (`net start MSSQLSERVER`), then `RealAntiRansomwareManager.exe issue-token sqlservr.exe`
-5. **Observe**: `RealAntiRansomwareManager.exe list-tokens` and `status`
-6. **Revoke**: `RealAntiRansomwareManager.exe revoke-token <pid>` when credentials rotated.
-
-| Command | Description |
-|---------|-------------|
-| `install`/`uninstall` | Add or remove the minifilter service and start/stop it |
-| `enable`/`disable`/`monitor`/`maximum` | Adjust protection level (monitor = log only) |
-| `status` | Driver health + statistics (files blocked, encryption attempts, token validations) |
-| `configure-db <proc> <path> [--hours N]` | Sets process path, allowed directories, binary hash, token duration |
-| `issue-token <proc>` | Generates SERVICE_TOKEN_REQUEST and primes kernel cache |
-| `list-tokens` | Dumps active token table (PID, expiry, allowed paths, access count) |
-| `revoke-token <pid>` | Immediate revocation for compromised services |
-| `calc-hash <binary>` | SHA256 attestation helper for policy definitions |
-
-### Python Suite Operations
+### Python Components
 
 ```powershell
-python antiransomware_python.py --gui         # Rich desktop console
-python antiransomware_python.py --cli         # Headless monitoring
-python service_manager.py --install          # Windows service wrapper
-python admin_dashboard.py                    # Web dashboard on :8080
-python broker.py                             # Hardware/demo token broker
-python policy_engine.py --test               # Validate policies/pipelines
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-Key GUI tabs: **Overview** (live stats + control), **Activity Log**, **Protected Assets**, **Network Discovery**, **USB/Auth Tokens**. `network_discovery_fixed.py` provides the standalone subnet scanner with corrected layout.
+**Required packages:**
+- psutil: process monitoring
+- wmi: TPM access
+- pywin32: Windows services
+- pqcdualusb: post-quantum signatures
+- cryptography: encryption primitives
+- flask: web dashboard
 
-## Observability & Testing
+## Deployment
 
-- **Logs**: `logs/antiransomware.log`, Windows Event Log (driver), CLI output.
-- **Databases**: `protection_db.sqlite`, `antiransomware.db`, `quarantine/` artifacts.
-- **Health checks**: `python health_monitor.py --check-all`, `python final_security_check.py`.
-- **Simulations**: `attack_simulation.py`, `test_antiransomware.py`, `production_test.py` to rehearse ransomware behavior, token issuance, and policy enforcement.
-- **Stats inspection**: `RealAntiRansomwareManager.exe status` exposes counters for encryption attempts, suspicious patterns, token validations/rejections.
+### Single-Host Configuration
 
-## Repository Map
-
-```
-├── RealAntiRansomwareDriver.c/.inf/.vcxproj   # Kernel minifilter
-├── RealAntiRansomwareManager_v2.cpp          # User-mode manager & CLI
-├── Python-Version/                           # tkinter GUI + services
-├── admin_dashboard.py / service_manager.py   # Web + service orchestration
-├── broker.py, ar_token.py                    # Token issuance/brokerage
-├── policy_engine.py, policies/               # Declarative policy sets
-├── logs/, backups/, quarantine/, protected/  # Runtime data
-├── build_*.bat / *.ps1                       # Build & deployment scripts
-├── README_DATABASE_PROTECTION.md             # Deep dive on DB workflow
-├── QUICKSTART.md, BUILD_FIX.md, POPUP_FIX.md # Ops notes
-└── docs (*.MD)                               # Architecture, reports, guides
+```mermaid
+graph TD
+    A[Windows Server] --> B[Install Driver]
+    B --> C[Configure Database Policy]
+    C --> D[Issue Token to SQL Server]
+    D --> E[Monitor Operations]
+    
+    F[Protected Directories] --> A
+    G[Backup Storage] --> A
 ```
 
-## Troubleshooting & FAQ
+**Installation steps:**
+```powershell
+# 1. Install driver
+RealAntiRansomwareManager.exe install
 
-| Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
-| `fatal error C1083: cannot open include file 'excpt.h'` | Visual Studio missing C++ workload | Launch **Visual Studio Installer**, enable **Desktop development with C++**, rerun `check.ps1` |
-| Driver install fails with access denied | Missing `SeLoadDriverPrivilege` or no admin shell | Run elevated PowerShell/Command Prompt, verify `whoami /priv` |
-| Driver loads but GUI shows no stats | IOCTL path blocked | Ensure `RealAntiRansomwareManager.exe status` runs elevated and driver name matches `\.\\AntiRansomwareFilter` |
-| Tokens deny valid DB writes | Binary updated or path mismatch | Re-run `calc-hash` on new binary, `configure-db`, `issue-token` again |
-| Python GUI missing buttons | Old layout | Use updated `network_discovery_fixed.py` or pull latest `Python-Version/antiransomware_python.py` |
-| Command windows pop up while idle | VS Code auto-detect tasks | Keep `.vscode/settings.json` from repo (auto-detection disabled) |
+# 2. Enable protection
+RealAntiRansomwareManager.exe enable
 
-## Security Posture & Best Practices
+# 3. Configure database
+RealAntiRansomwareManager.exe configure-db sqlservr.exe "C:\SQLData" --hours 24
 
-- **Least privilege**: run CLI as admin only when issuing tokens or changing driver state; GUI can run standard for monitoring.
-- **Token hygiene**: set realistic `--hours` windows (24h production, 1h staging) and script `issue-token` rotations via `Task Scheduler` or CI.
-- **Path confinement**: always point database directories to dedicated volumes; add read-only replicas via additional allowed paths.
-- **Audit trails**: ship `logs/` and driver ETW events into SIEM; archive `RealAntiRansomwareManager.exe status` output periodically.
-- **Test mode vs production**: keep `bcdedit /set testsigning off` on prod once you have an EV certificate; scripts in `build/` handle official signing.
-- **Python hardening**: when deploying the GUI, enable Windows Defender Application Control or convert to executable (`pyinstaller`) with signed binaries.
+# 4. Issue token
+RealAntiRansomwareManager.exe issue-token sqlservr.exe
+
+# 5. Verify status
+RealAntiRansomwareManager.exe status
+```
+
+### Multi-Tier Enterprise
+
+```mermaid
+graph TB
+    subgraph "Management Tier"
+        MGT[Management Console]
+        POL[Policy Distribution]
+        LOG[Audit Aggregator]
+    end
+    
+    subgraph "Database Tier"
+        DB1[SQL Server 1]
+        DB2[SQL Server 2]
+        DBA1[Agent 1]
+        DBA2[Agent 2]
+    end
+    
+    subgraph "Application Tier"
+        APP1[Web Server 1]
+        APP2[Web Server 2]
+        APA1[Agent 1]
+        APA2[Agent 2]
+    end
+    
+    MGT --> POL
+    POL --> DBA1
+    POL --> DBA2
+    POL --> APA1
+    POL --> APA2
+    
+    DBA1 --> LOG
+    DBA2 --> LOG
+    APA1 --> LOG
+    APA2 --> LOG
+    
+    DB1 --> DBA1
+    DB2 --> DBA2
+    APP1 --> APA1
+    APP2 --> APA2
+```
+
+**Centralized management:**
+- Policy distribution via gRPC/REST
+- Remote token issuance
+- Aggregated audit logging
+- Health monitoring and alerting
+
+## Configuration
+
+### Database Protection
+
+**Policy structure:**
+```cpp
+struct DB_PROTECTION_POLICY {
+    char ProcessName[256];          // "sqlservr.exe"
+    char ProcessPath[512];          // Full path to executable
+    char DataDirectory[512];        // "C:\SQLData"
+    BYTE BinaryHash[32];            // SHA256 of executable
+    ULONG64 TokenDurationMs;        // 86400000 (24 hours)
+    BOOLEAN RequireServiceParent;   // TRUE
+    BOOLEAN EnforcePathConfinement; // TRUE
+};
+```
+
+**Configuration example:**
+```powershell
+# Calculate binary hash
+$hash = RealAntiRansomwareManager.exe calc-hash "C:\Program Files\Microsoft SQL Server\MSSQL15.MSSQLSERVER\MSSQL\Binn\sqlservr.exe"
+
+# Configure policy
+RealAntiRansomwareManager.exe configure-db sqlservr.exe "C:\SQLData" --hours 24
+
+# Issue token
+RealAntiRansomwareManager.exe issue-token sqlservr.exe
+```
+
+### Security Levels
+
+| Level | Score | Active Factors | Token Size | Use Case |
+|-------|-------|----------------|------------|----------|
+| MAXIMUM | 100 | TPM + DeviceFP + USB | ~3500 bytes | Production (admin install) |
+| HIGH | 80 | TPM + DeviceFP | ~3400 bytes | Servers without USB |
+| MEDIUM | 60 | DeviceFP + USB | ~3389 bytes | Standard workstations |
+| LOW | 40 | Single factor | ~3300 bytes | Degraded mode |
+| EMERGENCY | 20 | Override | ~3200 bytes | Recovery only |
+
+**Security level selection:**
+- System automatically determines available factors
+- Downgrades gracefully if TPM/USB unavailable
+- Admin installation enables MAXIMUM security
+- Standard user installation provides MEDIUM security
+
+## Monitoring
+
+### Driver Statistics
+
+```powershell
+RealAntiRansomwareManager.exe status
+```
+
+**Output:**
+```
+Protection Level: ACTIVE
+Files Monitored: 45,231
+Write Operations: 3,892
+Blocked Operations: 12
+Encryption Attempts: 3
+Service Token Validations: 1,847
+Token Validation Failures: 2
+Active Service Tokens: 4
+```
+
+### Audit Log Analysis
+
+```powershell
+python view_audit_logs.py summary
+```
+
+**Statistics:**
+- Total events
+- TPM usage percentage
+- Security level distribution
+- Process breakdown
+- Success/failure rates
+- Event type distribution
+
+### Health Checks
+
+```python
+python health_monitor.py --check-all
+```
+
+**Checks:**
+- Driver loaded and responding
+- Token cache population
+- Expiry status of active tokens
+- Binary hash integrity
+- Path confinement violations
+- Suspicious pattern detection
+
+## Troubleshooting
+
+### Common Issues
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| Driver install fails | Missing privileges | Run as administrator |
+| TPM not available | No admin rights | Use `install_with_admin.py` |
+| Token validation fails | Binary updated | Recalculate hash, reissue token |
+| High false positives | Overly restrictive paths | Expand allowed directories |
+| Performance degradation | Monitor mode enabled | Switch to active protection |
+
+### Diagnostic Commands
+
+```powershell
+# Check driver status
+sc query AntiRansomwareFilter
+
+# View active tokens
+RealAntiRansomwareManager.exe list-tokens
+
+# Inspect audit logs
+python view_audit_logs.py recent 100
+
+# Verify TPM status
+Get-Tpm
+
+# Check process hash
+RealAntiRansomwareManager.exe calc-hash sqlservr.exe
+```
+
+### Log Locations
+
+| Log Type | Location | Format |
+|----------|----------|--------|
+| Audit logs | `.audit_logs/audit_YYYYMMDD.jsonl` | JSON Lines |
+| Application logs | `logs/antiransomware.log` | Plain text |
+| Driver logs | Windows Event Log | Event Viewer |
+| Statistics | Driver memory | IOCTL query |
+
+## Security Considerations
+
+### Operational Security
+
+1. **Least privilege**: Run management tools as administrator only when necessary
+2. **Token rotation**: Schedule periodic token renewal (24-hour default)
+3. **Path confinement**: Restrict database writes to dedicated volumes
+4. **Audit review**: Monitor logs for anomalies and unauthorized access
+5. **Test signing**: Disable in production, use EV certificate
+
+### Threat Model
+
+**Protected against:**
+- Credential theft attacks
+- Process injection
+- Service account compromise
+- Rapid file encryption
+- Shadow copy deletion
+- Credential dumping
+
+**Not protected against:**
+- Kernel-mode malware (same privilege level)
+- Boot sector infections
+- Physical access attacks
+- Social engineering
+- Zero-day kernel exploits
+
+### Compliance
+
+**Audit capabilities:**
+- Process-level attribution
+- Cryptographic proof of TPM usage
+- Complete access history
+- Tamper-evident logging
+- SIEM integration ready
+
+**Standards alignment:**
+- TPM 2.0 specification
+- NIST post-quantum cryptography
+- Windows driver signing requirements
+- Secure boot compatibility
 
 ## Contributing
 
-1. Fork the repo and create a branch (`git checkout -b feature/hardening-abc`).
-2. Run `python final_security_check.py` and `RealAntiRansomwareManager.exe status` after changes touching protection logic.
-3. Submit PR with context, test evidence, and mention architecture diagrams when updating docs.
+Development guidelines:
 
----
+1. Follow Windows driver development best practices
+2. Test all changes with kernel debugger
+3. Run security validation: `python final_security_check.py`
+4. Update audit log schema if modifying events
+5. Document IOCTL interface changes
 
-**Need to get started fast?** Read `QUICKSTART.md` for a scripted five-minute flow, then move to `README_DATABASE_PROTECTION.md` for the full database token story.
+## License
+
+MIT License - see LICENSE file for details
+
+## References
+
+- [TPM 2.0 Specification](https://trustedcomputinggroup.org/resource/tpm-library-specification/)
+- [Windows Driver Development](https://docs.microsoft.com/en-us/windows-hardware/drivers/)
+- [NIST Post-Quantum Cryptography](https://csrc.nist.gov/projects/post-quantum-cryptography)
+- [Minifilter Driver Programming](https://docs.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts)
+
+## Contact
+
+For security issues, create a private security advisory on GitHub.
