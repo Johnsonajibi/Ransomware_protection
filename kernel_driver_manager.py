@@ -489,23 +489,51 @@ Instance1.Flags = 0x0
                     break
                     
             if not wdk_path:
-                self.logger.warning("Windows Driver Kit not found. Creating placeholder driver.")
-                
-            # For demonstration, create a placeholder .sys file
-            # In production, this would be compiled with WDK
-            sys_file = os.path.join(source_dir, "antiransomware.sys")
-            
-            # Create a more realistic placeholder that mimics a real driver
-            placeholder_header = b'MZ\x90\x00'  # PE header start
-            placeholder_header += b'\x00' * 60  # PE header padding
-            placeholder_header += b'PE\x00\x00'  # PE signature
-            placeholder_header += b'\x64\x86'   # Machine type (x64)
-            placeholder_header += b'\x00' * 1000  # More realistic size
-            
-            with open(sys_file, 'wb') as f:
-                f.write(placeholder_header)
-                
-            self.logger.warning("⚠️  Placeholder driver created - WDK compilation required for production")
+                self.logger.error("Windows Driver Kit not found. Install WDK 10+ to build the real driver.")
+                return None
+
+            # Try to build a real driver via msbuild if a Visual Studio project is present
+            candidate_projects = [
+                os.path.join(source_dir, "AntiRansomwareDriver.vcxproj"),
+                os.path.join(source_dir, "RealAntiRansomwareDriver.vcxproj"),
+            ]
+
+            project_path = next((p for p in candidate_projects if os.path.exists(p)), None)
+            if not project_path:
+                self.logger.error("Driver project file (.vcxproj) not found in source directory; cannot build without it.")
+                return None
+
+            msbuild = os.path.join(wdk_path, "..", "..", "..", "MSBuild", "Current", "Bin", "MSBuild.exe")
+            if not os.path.exists(msbuild):
+                # Fallback to system msbuild
+                msbuild = "msbuild"
+
+            build_cmd = [
+                msbuild,
+                project_path,
+                "/p:Configuration=Release",
+                "/p:Platform=x64",
+            ]
+
+            self.logger.info("Building minifilter driver via msbuild")
+            result = subprocess.run(build_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                self.logger.error("Driver build failed: %s", result.stderr.strip())
+                return None
+
+            # Locate output .sys (common MSBuild output path)
+            bin_dir = os.path.join(source_dir, "x64", "Release")
+            sys_candidates = [
+                os.path.join(bin_dir, f)
+                for f in os.listdir(bin_dir) if f.lower().endswith(".sys")
+            ] if os.path.isdir(bin_dir) else []
+
+            if not sys_candidates:
+                self.logger.error("Driver build succeeded but no .sys output found in %s", bin_dir)
+                return None
+
+            sys_file = sys_candidates[0]
+            self.logger.info("✅ Driver built: %s", sys_file)
             return sys_file
             
         except Exception as e:

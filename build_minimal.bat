@@ -36,16 +36,22 @@ if not defined VS_INSTALL_PATH (
     echo Please run the 'Visual Studio Installer' and add the 'Desktop development with C++' workload.
     goto :fail
 )
-echo [INFO] Found Visual Studio at: "%VS_INSTALL_PATH%"
+echo [INFO] Found Visual Studio at: %VS_INSTALL_PATH%
 
 :: --- Step 4: Setup Build Environment ---
 set "VCVARS_BAT=%VS_INSTALL_PATH%\VC\Auxiliary\Build\vcvarsall.bat"
 if not exist "%VCVARS_BAT%" (
-    echo [ERROR] vcvarsall.bat not found in the detected path.
+    echo [WARNING] vcvarsall.bat not found at expected location.
+    echo [INFO] Trying alternative path...
+    set "VCVARS_BAT=%VS_INSTALL_PATH%\Common7\Tools\VsDevCmd.bat"
+)
+if not exist "%VCVARS_BAT%" (
+    echo [ERROR] Cannot find build environment script.
+    echo Please verify Visual Studio C++ tools are installed.
     goto :fail
 )
-echo [INFO] Initializing build environment...
-call "%VCVARS_BAT%" x64
+echo [INFO] Initializing build environment from: %VCVARS_BAT%
+call "%VCVARS_BAT%" -arch=x64 -host_arch=x64
 
 :: --- Step 5: Verify Environment and Paths ---
 set "BUILD_DIR=%~dp0build_production"

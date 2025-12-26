@@ -11,6 +11,7 @@ import json
 import hashlib
 import secrets
 import getpass
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 import ctypes
@@ -266,11 +267,38 @@ class SecureEmergencyUnlock:
         success_count = 0
         total_count = 0
         
-        # Placeholder - in real implementation, query database
-        protected_items = [
-            "C:\\Users\\Protected\\Documents",
-            "C:\\Users\\Protected\\Photos"
-        ]
+        protected_items = []
+
+        # Attempt to read protected items from SQLite database
+        db_path = Path("complete_antiransomware.db")
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("CREATE TABLE IF NOT EXISTS protected_items (path TEXT PRIMARY KEY)")
+                cursor.execute("SELECT path FROM protected_items")
+                protected_items = [row[0] for row in cursor.fetchall()]
+                conn.close()
+            except Exception as e:
+                print(f"⚠️ Failed to query database: {e}")
+
+        # Fallback: read from JSON configuration if DB is empty
+        if not protected_items:
+            json_path = Path("protected_items.json")
+            if json_path.exists():
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        protected_items = data.get('paths', [])
+                except Exception as e:
+                    print(f"⚠️ Failed to read protected_items.json: {e}")
+
+        # If still empty, default to known safe locations (minimal fallback)
+        if not protected_items:
+            protected_items = [
+                "C:\\Users\\Public\\Documents",
+                "C:\\Users\\Public\\Pictures"
+            ]
         
         for item in protected_items:
             total_count += 1

@@ -5,6 +5,7 @@ Production-grade health monitoring with alerting
 """
 
 import os
+import sys
 import time
 import json
 import psutil
@@ -18,6 +19,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
 
 @dataclass
 class HealthCheckResult:
@@ -540,11 +543,35 @@ Failed Checks:
     
     def _check_kernel_driver(self) -> HealthCheckResult:
         """Check kernel driver status"""
-        # This is a placeholder - actual implementation would check driver loading
-        # For now, assume driver is loaded if service is running
-        status = "OK"
-        message = "Kernel driver loaded"
-        details = {"driver_loaded": True}
+        service_name = self.config.get("kernel", {}).get("service_name", "AntiRansomwareDriver")
+        status = "UNKNOWN"
+        message = "Driver status unknown"
+        details = {"service_name": service_name}
+
+        try:
+            if sys.platform == 'win32':
+                svc = psutil.win_service_get(service_name)
+                info = svc.as_dict()
+                running = info.get('status') == 'running'
+                status = "OK" if running else "CRITICAL"
+                message = "Kernel driver loaded" if running else "Kernel driver not running"
+                details.update({"status": info.get('status'), "binpath": info.get('binpath')})
+            else:
+                # On Unix-like systems, check /proc/modules for driver name
+                driver_name = self.config.get("kernel", {}).get("module_name", "anti_ransomware")
+                running = False
+                try:
+                    with open('/proc/modules', 'r') as f:
+                        running = any(driver_name in line for line in f.readlines())
+                except FileNotFoundError:
+                    running = False
+                status = "OK" if running else "CRITICAL"
+                message = "Kernel module loaded" if running else "Kernel module not loaded"
+                details.update({"module_name": driver_name, "loaded": running})
+        except Exception as e:
+            status = "WARNING"
+            message = f"Kernel driver check failed: {e}"
+            details["error"] = str(e)
         
         return HealthCheckResult(
             name="kernel_driver",
@@ -557,10 +584,40 @@ Failed Checks:
     
     def _check_usb_dongles(self) -> HealthCheckResult:
         """Check USB dongles availability"""
-        # Placeholder for USB dongle detection
-        status = "OK"
-        message = "USB dongles available"
-        details = {"dongles_detected": 1}
+        status = "CRITICAL"
+        message = "No USB dongles detected"
+        details = {"dongles_detected": 0, "devices": []}
+
+        try:
+            partitions = psutil.disk_partitions(all=False)
+            for p in partitions:
+                is_removable = False
+                if sys.platform == 'win32':
+                    try:
+                        import win32file
+                        is_removable = win32file.GetDriveType(p.device) == win32file.DRIVE_REMOVABLE
+                    except Exception:
+                        is_removable = 'removable' in p.opts.lower()
+                else:
+                    is_removable = p.fstype in ['vfat', 'exfat'] or 'nosuid' in p.opts
+                if is_removable:
+                    details['devices'].append({
+                        'device': p.device,
+                        'mountpoint': p.mountpoint,
+                        'fstype': p.fstype,
+                        'opts': p.opts
+                    })
+            count = len(details['devices'])
+            details['dongles_detected'] = count
+            if count > 0:
+                status = "OK"
+                message = f"{count} USB dongle(s) detected"
+            else:
+                message = "No USB dongles detected"
+        except Exception as e:
+            status = "WARNING"
+            message = f"USB dongle check failed: {e}"
+            details['error'] = str(e)
         
         return HealthCheckResult(
             name="usb_dongles",
@@ -614,11 +671,24 @@ Failed Checks:
             message = "Certificate directory not found"
             details = {"cert_dir_exists": False}
         else:
-            # Check for certificates nearing expiry
-            # This is a placeholder - actual implementation would parse certificates
             status = "OK"
             message = "Certificates valid"
-            details = {"certificates_checked": 0}
+            details = {"certificates_checked": 0, "expiring_soon": []}
+            for cert_path in cert_dir.glob('*.pem'):
+                try:
+                    with open(cert_path, 'rb') as f:
+                        data = f.read()
+                    cert = x509.load_pem_x509_certificate(data, default_backend())
+                    days_left = (cert.not_valid_after - datetime.utcnow()).days
+                    details["certificates_checked"] += 1
+                    if days_left <= 30:
+                        details["expiring_soon"].append({"file": cert_path.name, "days_left": days_left})
+                        status = "WARNING"
+                        message = "Some certificates expiring soon"
+                except Exception as e:
+                    details.setdefault("errors", []).append({"file": cert_path.name, "error": str(e)})
+                    status = "WARNING"
+                    message = "Certificate parsing issues detected"
         
         return HealthCheckResult(
             name="certificate_expiry",

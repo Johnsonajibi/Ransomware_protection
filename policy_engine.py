@@ -10,11 +10,14 @@ import yaml
 import re
 import fnmatch
 import time
+import base64
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 import hashlib
 import psutil
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 @dataclass
 class ProcessRule:
@@ -370,8 +373,38 @@ class PolicyEngine:
     
     def _verify_policy_signature(self, policy_data: Dict) -> bool:
         """Verify policy signature (simplified implementation)"""
-        # TODO: Implement actual signature verification using admin key
-        return True
+        try:
+            signature_b64 = policy_data.get('signature')
+            if not signature_b64:
+                return True  # Nothing to verify
+
+            # Remove signature field for canonical representation
+            policy_copy = dict(policy_data)
+            policy_copy.pop('signature', None)
+            canonical = json.dumps(policy_copy, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+            # Load admin public key (PEM) from keys/admin_public_key.pem
+            pub_path = os.path.join('keys', 'admin_public_key.pem')
+            if not os.path.exists(pub_path):
+                print("Admin public key not found; rejecting unsigned policy")
+                return False
+
+            with open(pub_path, 'rb') as f:
+                pub_data = f.read()
+            public_key = serialization.load_pem_public_key(pub_data)
+
+            signature = base64.b64decode(signature_b64)
+
+            if not isinstance(public_key, Ed25519PublicKey):
+                print("Unsupported public key type for policy verification")
+                return False
+
+            public_key.verify(signature, canonical)
+            return True
+
+        except Exception as e:
+            print(f"Policy signature verification failed: {e}")
+            return False
     
     def add_rule(self, rule: PathRule):
         """Add a new rule to the policy"""

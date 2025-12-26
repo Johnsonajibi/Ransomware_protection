@@ -11,6 +11,13 @@ pywin32==306
 # Smart card and USB authentication
 pyscard==2.0.7
 fido2==1.1.2
+pqcdualusb
+
+# PQC + token and broker stack
+pynacl
+grpcio
+protobuf
+pyyaml
 
 # Core functionality (built into Python)
 # sqlite3, hashlib, pathlib, threading, subprocess, logging, json

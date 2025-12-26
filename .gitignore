@@ -1,0 +1,123 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+
+# Build outputs
+build/
+dist/
+build_production/
+deployment/
+*.egg-info/
+.eggs/
+
+# PyInstaller
+*.spec
+*.manifest
+
+# Debug and log files
+debug_*.txt
+app_debug.txt
+app_error.txt
+desktop_debug.txt
+desktop_error.txt
+desktop_test.txt
+test_*.txt
+test_out.txt
+test_err.txt
+debug_out.txt
+debug_err.txt
+*.log
+admin.log
+
+# Database files (runtime)
+*.db
+*.sqlite
+*.sqlite3
+admin.db
+compliance.db
+threat_intel.db
+antiransomware.db
+protection_db.sqlite
+
+# Zip archives and extracted directories
+*.zip
+AntiRansomware-Complete-*/
+AntiRansomware-Installer-*/
+AntiRansomware-v*/
+
+# Audit logs (runtime data)
+.audit_logs/
+*.jsonl
+
+# Test and temporary data
+test_entropy/
+data/
+lib/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Compiled binaries (optional - remove if you want to track them)
+*.exe
+*.dll
+*.sys
+*.pdb
+*.obj
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Token storage (runtime)
+.trifactor_tokens/
+hybrid_pqc_keys_*.json
+
+# Certificate files (security)
+*.cer
+*.pfx
+*.p12
+
+# Windows installer files
+*.msi
+*.msm
+*.msp
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp

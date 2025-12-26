@@ -25,6 +25,82 @@ struct ARToken {
     let expiry: Date
     let nonce: Data
     let signature: Data
+
+    func signedData(path: String, pid: pid_t) -> Data {
+        var payload = Data()
+        payload.append(Data(path.utf8))
+        payload.append(Data(withUnsafeBytes(of: pid.littleEndian, Array.init)))
+        payload.append(Data(withUnsafeBytes(of: fileId.littleEndian, Array.init)))
+        payload.append(Data(withUnsafeBytes(of: processId.littleEndian, Array.init)))
+        payload.append(Data(withUnsafeBytes(of: userId.littleEndian, Array.init)))
+        payload.append(Data(withUnsafeBytes(of: allowedOps.littleEndian, Array.init)))
+        payload.append(Data(withUnsafeBytes(of: byteQuota.littleEndian, Array.init)))
+        payload.append(Data(withUnsafeBytes(of: expiry.timeIntervalSince1970.bitPattern.littleEndian, Array.init)))
+        payload.append(nonce)
+        return payload
+    }
+}
+
+// Simple nonce cache to prevent replay
+class TokenCache {
+    private var nonces = Set<Data>()
+    private let lock = NSLock()
+    private let maxEntries = 256
+    func isNonceReplayed(_ nonce: Data) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if nonces.contains(nonce) { return true }
+        if nonces.count >= maxEntries {
+            nonces.removeFirst()
+        }
+        nonces.insert(nonce)
+        return false
+    }
+}
+
+// Broker client reads token material from daemon drop directory or XPC
+class BrokerClient {
+    private let tokenDir = URL(fileURLWithPath: "/var/run/antiransomware/tokens")
+    func requestToken(path: String, pid: pid_t, completion: @escaping (ARToken?) -> Void) {
+        DispatchQueue.global().async {
+            let fileURL = self.tokenDir.appendingPathComponent("\(pid).json")
+            guard let data = try? Data(contentsOf: fileURL),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(nil); return
+            }
+            guard
+                let fileId = json["file_id"] as? UInt64,
+                let processId = json["process_id"] as? Int,
+                let userId = json["user_id"] as? Int,
+                let allowedOps = json["allowed_ops"] as? UInt32,
+                let byteQuota = json["byte_quota"] as? UInt64,
+                let expiryTs = json["expiry"] as? TimeInterval,
+                let nonceB64 = json["nonce"] as? String,
+                let sigB64 = json["signature"] as? String,
+                let nonce = Data(base64Encoded: nonceB64),
+                let signature = Data(base64Encoded: sigB64)
+            else {
+                completion(nil); return
+            }
+            let token = ARToken(
+                fileId: fileId,
+                processId: pid_t(processId),
+                userId: uid_t(userId),
+                allowedOps: allowedOps,
+                byteQuota: byteQuota,
+                expiry: Date(timeIntervalSince1970: expiryTs),
+                nonce: nonce,
+                signature: signature
+            )
+            completion(token)
+        }
+    }
+}
+
+enum Crypto {
+    static func verifyEd25519(data: Data, signature: Data, publicKey: Data) -> Bool {
+        guard let pk = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey) else { return false }
+        return pk.isValidSignature(signature, for: data)
+    }
 }
 
 // Per-file context for zero-copy token cache
@@ -40,6 +116,8 @@ class AntiRansomwareES: NSObject {
     private var protectedPaths: [String] = []
     private var fileContexts: [String: ARFileContext] = [:]
     private let contextLock = NSLock()
+    private let brokerClient = BrokerClient()
+    private let tokenCache = TokenCache()
     
     override init() {
         super.init()
@@ -76,19 +154,19 @@ class AntiRansomwareES: NSObject {
     }
     
     private func loadConfiguration() {
-        // Load protected paths from policy
-        // TODO: Load from secure policy file
-        protectedPaths = ["/Users/Shared/Protected"]
-        
-        // Load public key
-        // TODO: Load Ed25519 public key from secure location (keychain)
+        if let paths = try? String(contentsOf: URL(fileURLWithPath: "/etc/antiransomware/protected_paths")) {
+            protectedPaths = paths.split(separator: "\n").map { String($0) }.filter { !$0.isEmpty }
+        }
+        if protectedPaths.isEmpty {
+            protectedPaths = ["/Users/Shared/Protected"]
+        }
         loadPublicKeyFromKeychain()
     }
     
     private func loadPublicKeyFromKeychain() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyType as String: kSecAttrKeyTypeEd25519,
             kSecAttrApplicationTag as String: "com.antiransomware.publickey",
             kSecReturnData as String: true
         ]
@@ -187,9 +265,18 @@ class AntiRansomwareES: NSObject {
         let sourcePath = getFilePath(from: msg.event.rename.source.pointee.path)
         
         if isProtectedPath(sourcePath) {
-            // Check token for rename operation
-            // TODO: Implement token check for rename
-            print("Rename operation on protected path: \(sourcePath)")
+            let pid = msg.process.pointee.pid
+            requestTokenFromBroker(path: sourcePath, pid: pid) { [weak self] token in
+                guard let self = self else { return }
+                if let token = token, self.verifyToken(token, path: sourcePath, pid: pid) {
+                    self.cacheToken(token, for: sourcePath)
+                    es_respond_auth_result(client, &msg, ES_AUTH_RESULT_ALLOW, false)
+                } else {
+                    print("Rename denied on protected path: \(sourcePath)")
+                    es_respond_auth_result(client, &msg, ES_AUTH_RESULT_DENY, false)
+                }
+            }
+            return
         }
         
         es_respond_auth_result(client, &msg, ES_AUTH_RESULT_ALLOW, false)
@@ -200,9 +287,18 @@ class AntiRansomwareES: NSObject {
         let path = getFilePath(from: msg.event.unlink.target.pointee.path)
         
         if isProtectedPath(path) {
-            // Check token for unlink operation
-            // TODO: Implement token check for unlink
-            print("Unlink operation on protected path: \(path)")
+            let pid = msg.process.pointee.pid
+            requestTokenFromBroker(path: path, pid: pid) { [weak self] token in
+                guard let self = self else { return }
+                if let token = token, self.verifyToken(token, path: path, pid: pid) {
+                    self.cacheToken(token, for: path)
+                    es_respond_auth_result(client, &msg, ES_AUTH_RESULT_ALLOW, false)
+                } else {
+                    print("Unlink denied on protected path: \(path)")
+                    es_respond_auth_result(client, &msg, ES_AUTH_RESULT_DENY, false)
+                }
+            }
+            return
         }
         
         es_respond_auth_result(client, &msg, ES_AUTH_RESULT_ALLOW, false)
@@ -227,18 +323,30 @@ class AntiRansomwareES: NSObject {
             return false
         }
         
-        // TODO: Verify Ed25519 signature over token data
-        // TODO: Check nonce for replay protection
+        if !Crypto.verifyEd25519(data: token.signedData(path: path, pid: pid), signature: token.signature, publicKey: publicKey) {
+            return false
+        }
+
+        if tokenCache.isNonceReplayed(token.nonce) {
+            return false
+        }
         
         return true
     }
     
     private func requestTokenFromBroker(path: String, pid: pid_t, completion: @escaping (ARToken?) -> Void) {
-        // TODO: Communicate with user-space broker via XPC/Mach
-        // For now, return nil to trigger denial
-        DispatchQueue.global().async {
-            completion(nil)
+        // Communicate with user-space broker via XPC
+        brokerClient.requestToken(path: path, pid: pid, completion: completion)
+    }
+
+    private func cacheToken(_ token: ARToken, for path: String) {
+        contextLock.lock()
+        if let ctx = fileContexts[path] {
+            ctx.validToken = token
+            ctx.hasValidToken = true
+            ctx.lastAccess = Date()
         }
+        contextLock.unlock()
     }
 }
 
