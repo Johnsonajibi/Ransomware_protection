@@ -397,7 +397,8 @@ static int ar_load_policy_paths(void) {
     f = filp_open("/etc/antiransomware/protected_paths", O_RDONLY, 0);
     if (IS_ERR(f)) {
         /* Default to a single protected path if policy missing */
-        strcpy(ar_protected_paths[0], "/protected");
+        strncpy(ar_protected_paths[0], "/protected", MAX_PATH_LEN - 1);
+        ar_protected_paths[0][MAX_PATH_LEN - 1] = '\0';
         ar_protected_path_count = 1;
         kfree(buf);
         return 0;
