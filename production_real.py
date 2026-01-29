@@ -191,7 +191,8 @@ class RealUSBDongleManager:
                 from smartcard.System import readers
                 from smartcard.CardMonitoring import CardMonitor, CardObserver
                 # Simplified - would implement proper APDU commands
-                return hashlib.md5(reader_name.encode()).hexdigest()[:8].upper()
+                # SAFE: Use SHA-256 instead of MD5
+                return hashlib.sha256(reader_name.encode()).hexdigest()[:8].upper()
         except:
             pass
         return "UNKNOWN"
@@ -261,7 +262,7 @@ class RealUSBDongleManager:
                 
         except Exception as e:
             logger.error(f"Authentication error: {e}")
-            return {'success': False, 'error': str(e)}
+            return {'success': False, 'error': 'Internal authentication error'}
     
     def _authenticate_smart_card(self, device, pin):
         """Authenticate with real smart card using PC/SC standard"""
@@ -607,6 +608,13 @@ class RealFolderBrowser:
     def browse_folders(start_path="C:\\"):
         """Browse real filesystem"""
         try:
+            if not start_path or not validate_path(start_path):
+                logger.warning(f"Invalid path rejected in browse_folders: {start_path}")
+                start_path = "C:\\"
+            
+            # Normalize path
+            start_path = os.path.abspath(start_path)
+            
             if not os.path.exists(start_path):
                 start_path = "C:\\"
             
@@ -939,6 +947,13 @@ class ProductionAntiRansomwareSystem:
     def add_protected_folder(self, path: str, policy_id: str = 'high_security') -> bool:
         """Add folder to protection"""
         try:
+            # Validate path to prevent path traversal attacks
+            if not path or not validate_path(path):
+                logger.warning(f"Invalid path rejected: {path}")
+                return False
+            
+            path = os.path.abspath(path)
+            
             if not os.path.exists(path):
                 return False
             
@@ -1024,6 +1039,14 @@ def api_browse_folders():
         data = request.get_json()
         path = data.get('path', 'C:\\')
         
+        # SAFE: Sanitize path to prevent traversal
+        if not path or not validate_path(path):
+            logger.warning(f"Invalid path provided for browsing: {path}")
+            return jsonify({
+                'success': False,
+                'error': 'Invalid path provided'
+            })
+
         if path == 'DRIVES':
             items = production_system.folder_browser.get_drives()
         else:
@@ -1036,9 +1059,10 @@ def api_browse_folders():
         })
         
     except Exception as e:
+        logger.error(f"Browse folders error: {e}", exc_info=True)
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': 'Internal server error'
         })
 
 @app.route('/api/add-folder', methods=['POST'])
@@ -1049,13 +1073,19 @@ def api_add_folder():
         path = data.get('path')
         policy_id = data.get('policy', 'high_security')
         
+        # SAFE: Sanitize path to prevent traversal
+        if not path or not validate_path(path):
+            logger.warning(f"Invalid path provided for adding folder: {path}")
+            return jsonify({'success': False, 'error': 'Invalid path provided'})
+
         if production_system.add_protected_folder(path, policy_id):
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Failed to add folder'})
             
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Add folder error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 @app.route('/api/remove-folder', methods=['POST'])
 def api_remove_folder():
@@ -1086,7 +1116,8 @@ def api_remove_folder():
         return jsonify({'success': True})
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Remove folder error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 @app.route('/api/authenticate-dongle', methods=['POST'])
 def api_authenticate_dongle():
@@ -1100,7 +1131,8 @@ def api_authenticate_dongle():
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Auth dongle error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 # Templates
 PRODUCTION_DASHBOARD_TEMPLATE = """

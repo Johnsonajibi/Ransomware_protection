@@ -488,7 +488,7 @@ if __name__ == "__main__":
     # Test hardware token validator
     print("\n🔐 Testing Hardware Token Validator...")
     validator = HardwareTokenValidator()
-    print(f"Hardware Fingerprint: [REDACTED - {hashlib.sha256(validator.secret_key.encode()).hexdigest()[:16]}...]")
+    print(f"Hardware Fingerprint: [PROTECTED]")
     
     # Test behavioral monitor
     print("\n🔍 Testing Behavioral Process Monitor...")

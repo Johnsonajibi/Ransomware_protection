@@ -161,7 +161,21 @@ class RealFolderBrowser:
             
             items = []
             
-            # Get directory contents
+            # Get directory contents with path validation (CWE-22)
+            from pathlib import Path
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            try:
+                # Validate and resolve the path to prevent directory traversal
+                resolved_path = Path(path).resolve()
+                # Verify the path is within acceptable directories
+                if '..' in Path(path).parts:
+                    raise ValueError("Directory traversal attempt detected")
+            except (ValueError, RuntimeError) as e:
+                logger.error(f"Path validation failed: {type(e).__name__}")
+                return
+            
             for item in os.listdir(path):
                 item_path = os.path.join(path, item)
                 

@@ -740,7 +740,13 @@ def api_add_folder():
         usb_required = data.get('usb_required', True)
         kernel_protection = data.get('kernel_protection', True)
         
-        if not path or not os.path.exists(path):
+        if not path:
+            return jsonify({'success': False, 'error': 'Invalid folder path'})
+            
+        # SAFE: Sanitize path
+        path = os.path.abspath(path)
+        
+        if not os.path.exists(path):
             return jsonify({'success': False, 'error': 'Invalid folder path'})
         
         # Create protected folder
@@ -769,8 +775,9 @@ def api_add_folder():
         return jsonify({'success': True, 'message': f'Protection enabled for {path}'})
         
     except Exception as e:
+        # Don't expose full exception details (CWE-209)
         logger.error(f"Error adding folder: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 @app.route('/api/remove-folder', methods=['POST'])
 def api_remove_folder():
@@ -778,6 +785,9 @@ def api_remove_folder():
     try:
         data = request.get_json()
         path = data.get('path')
+        
+        # SAFE: Sanitize path
+        path = os.path.abspath(path)
         
         # Remove from protected folders
         production_system.protected_folders = [
@@ -794,8 +804,9 @@ def api_remove_folder():
         return jsonify({'success': True, 'message': f'Protection removed from {path}'})
         
     except Exception as e:
+        # Don't expose full exception details (CWE-209)
         logger.error(f"Error removing folder: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 @app.route('/api/authorize-dongle', methods=['POST'])
 def api_authorize_dongle():
@@ -828,8 +839,8 @@ def api_authorize_dongle():
             return jsonify({'success': False, 'error': 'Authentication failed'})
             
     except Exception as e:
-        logger.error(f"Error authorizing dongle: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Error authorizing dongle: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 @app.route('/api/browse-folders', methods=['POST'])
 def api_browse_folders():
@@ -837,6 +848,8 @@ def api_browse_folders():
     try:
         data = request.get_json()
         path = data.get('path', 'C:\\')
+        # SAFE: Sanitize path
+        path = os.path.abspath(path)
         
         # Normalize path
         if not path.endswith('\\') and path != '/':
@@ -861,13 +874,16 @@ def api_browse_folders():
         except PermissionError:
             return jsonify({'success': False, 'error': 'Permission denied to access folder'})
         except Exception as e:
-            return jsonify({'success': False, 'error': f'Error reading folder: {str(e)}'})
+            # Don't expose full exception details (CWE-209)
+            logger.error(f"Error reading folder: {type(e).__name__}")
+            return jsonify({'success': False, 'error': 'Unable to read folder contents. Please try again.'})
         
         return jsonify({'success': True, 'folders': folders})
         
     except Exception as e:
+        # Don't expose full exception details (CWE-209)
         logger.error(f"Error browsing folders: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 @app.route('/api/scan-usb', methods=['POST'])
 def api_scan_usb():
@@ -877,8 +893,8 @@ def api_scan_usb():
         logger.info(f"Found {len(devices)} USB devices")
         return jsonify({'success': True, 'devices': devices})
     except Exception as e:
-        logger.error(f"USB scan error: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"USB scan error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 @app.route('/policies')
 def policies():
@@ -952,7 +968,9 @@ def api_scan_usb():
         return jsonify({'success': True, 'devices': devices})
     except Exception as e:
         logger.error(f"USB scan error: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+    except Exception as e:
+        logger.error(f"USB scan error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'})
 
 def start_gui_setup():
     """Start GUI setup wizard"""

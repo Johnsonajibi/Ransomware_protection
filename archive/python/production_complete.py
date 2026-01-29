@@ -850,7 +850,8 @@ def api_remove_folder():
         return jsonify({'success': True, 'message': f'Protection removed from {path}'})
         
     except Exception as e:
-        logger.error(f"Error removing folder: {e}")
+        # Don't expose full exception details (CWE-209)
+        logger.error(f"Error removing folder: {type(e).__name__}")
         return jsonify({'success': False, 'error': 'Unable to remove folder from protection. Please try again.'})
 
 @app.route('/api/authorize-dongle', methods=['POST'])

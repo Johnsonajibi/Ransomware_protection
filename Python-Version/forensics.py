@@ -498,6 +498,9 @@ class ForensicsManager:
                 logger.error(f"Invalid report path rejected: {report_path}")
                 return None
             
+            # SAFE: Ensure absolute path
+            report_path = os.path.abspath(report_path)
+            
             with open(report_path, 'w') as f:
                 json.dump(report, f, indent=2)
             

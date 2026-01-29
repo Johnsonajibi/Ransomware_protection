@@ -5518,13 +5518,13 @@ def main():
             return
         
         try:
-            subprocess.run('powershell -Command "Set-MpPreference -DisableRealtimeMonitoring $false"', 
-                          # shell=True removed for security
+            # SAFE: Use list-based arguments
+            subprocess.run(['powershell', '-Command', 'Set-MpPreference -DisableRealtimeMonitoring $false'],
                         capture_output=True, check=True)
             print("Windows Defender real-time protection enabled")
             
-            subprocess.run('powershell -Command "Set-MpPreference -EnableControlledFolderAccess Enabled"', 
-                          # shell=True removed for security
+            # SAFE: Use list-based arguments
+            subprocess.run(['powershell', '-Command', 'Set-MpPreference -EnableControlledFolderAccess Enabled'],
                         capture_output=True, check=True)
             print("Controlled Folder Access enabled")
             

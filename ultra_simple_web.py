@@ -96,7 +96,7 @@ def test():
         return f'THREAT DETECTED AND BLOCKED! Moved to quarantine: {quarantine_file.name}'
         
     except Exception as e:
-        return f'Test failed: {str(e)}'
+        return 'Internal server error'
 
 @app.route('/stats')
 def get_stats():

@@ -727,20 +727,26 @@ BOOLEAN IsSuspiciousProcess(VOID)
 {
     PEPROCESS currentProcess = PsGetCurrentProcess();
     PUNICODE_STRING processName = NULL;
+    NTSTATUS status;
+    BOOLEAN isSuspicious = FALSE;
     ULONG i;
     
-    // Get process image name
-    processName = (PUNICODE_STRING)((PUCHAR)currentProcess + 0x450); // Offset for process name
+    // SAFE: Use SeLocateProcessImageName instead of hardcoded offset (CWE-450)
+    status = SeLocateProcessImageName(currentProcess, &processName);
     
-    if (processName && processName->Buffer) {
+    if (NT_SUCCESS(status) && processName && processName->Buffer) {
         for (i = 0; i < ARRAYSIZE(g_SuspiciousProcesses); i++) {
             if (RtlSuffixUnicodeString(&g_SuspiciousProcesses[i], processName, TRUE)) {
-                return TRUE;
+                isSuspicious = TRUE;
+                break;
             }
         }
+        
+        // Free the memory allocated by SeLocateProcessImageName
+        ExFreePool(processName);
     }
     
-    return FALSE;
+    return isSuspicious;
 }
 
 BOOLEAN DetectEncryptionPattern(_In_ PFLT_CALLBACK_DATA Data)

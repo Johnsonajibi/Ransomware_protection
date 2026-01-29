@@ -28,6 +28,37 @@ from pathlib import Path
 from dataclasses import dataclass, field, asdict
 import socket
 import pickle
+import io
+import sys
+
+class SafeUnpickler(pickle.Unpickler):
+    """
+    A safer version of pickle.Unpickler that only allows a whitelist of classes.
+    """
+    def find_class(self, module, name):
+        # Only allow specific modules/classes
+        allowed_modules = {
+            'datetime', 
+            'numpy', 
+            'sklearn.ensemble._iforest', # Corrected from _forest to _iforest based on original
+            'sklearn.preprocessing._data', # Added from original _safe_load_pickle
+            'collections', # Added from original _safe_load_pickle
+            'sklearn.tree._classes'
+        }
+        if module in allowed_modules:
+            return super().find_class(module, name)
+        
+        # Raise an error for anything else
+        raise pickle.UnpicklingError(f"Global '{module}.{name}' is forbidden")
+
+    @staticmethod
+    def loads(data):
+        return SafeUnpickler(io.BytesIO(data)).load()
+
+    @staticmethod
+    def load(file_obj):
+        # This static method should just return the loaded object, not timedelta
+        return SafeUnpickler(file_obj).load()
 
 # Standard library for ML
 try:
@@ -250,7 +281,8 @@ class MLAnomalyDetector:
         if os.path.exists(self.model_path):
             try:
                 with open(self.model_path, 'rb') as f:
-                    data = pickle.load(f)
+                    # Use SafeUnpickler for improved security (CWE-502)
+                    data = SafeUnpickler.load(f)
                     self.model = data['model']
                     self.scaler = data['scaler']
                     self.is_trained = data.get('is_trained', False)

@@ -45,9 +45,9 @@ class FolderUnlocker:
             print(f"🔓 Unlocking folder: {folder_path}")
             
             # Remove system attributes using attrib command
-            cmd = f'attrib -R -H -S "{folder_path}"'
-            result = subprocess.run(cmd, # shell=True removed for security
-                        capture_output=True, capture_output=True, text=True)
+            # SAFE: Use list-based arguments to prevent injection
+            cmd = ['attrib', '-R', '-H', '-S', str(folder_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
             if result.returncode == 0:
                 print("✅ System attributes removed")
@@ -83,13 +83,37 @@ class FolderUnlocker:
             return False
     
     def show_hidden_folders(self, directory):
-        """Show all folders including hidden/system ones"""
+        """Show all folders including hidden/system ones using safe native Python"""
         try:
-            cmd = f'dir /A:D "{directory}"'
-            result = subprocess.run(cmd, # shell=True removed for security
-                        capture_output=True, capture_output=True, text=True)
-            print("📂 All folders (including hidden/system):")
-            print(result.stdout)
+            target_dir = Path(directory)
+            if not target_dir.exists():
+                print(f"❌ Directory not found: {directory}")
+                return
+
+            print(f"📂 All folders in {target_dir} (including hidden/system):")
+            count = 0
+            # iterate using native path object which sees all files including hidden ones on Windows
+            for item in target_dir.iterdir():
+                if item.is_dir():
+                    try:
+                        # Check hidden attribute
+                        is_hidden = False
+                        if os.name == 'nt':
+                            import ctypes
+                            attrs = ctypes.windll.kernel32.GetFileAttributesW(str(item))
+                            if attrs != -1 and (attrs & 2):  # FILE_ATTRIBUTE_HIDDEN
+                                is_hidden = True
+                        
+                        prefix = "🔒 " if is_hidden else "📁 "
+                        suffix = " (Hidden)" if is_hidden else ""
+                        print(f"{prefix}{item.name}{suffix}")
+                        count += 1
+                    except Exception as e:
+                        print(f"⚠️  Error accessing {item.name}: {e}")
+            
+            if count == 0:
+                print("   (No folders found)")
+                
         except Exception as e:
             print(f"Error listing folders: {e}")
 

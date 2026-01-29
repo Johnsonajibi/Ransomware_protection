@@ -139,7 +139,7 @@ NTSTATUS LogThreatActivity(_In_ PFILE_OPERATION_CONTEXT Context);
 
 // Device control functions
 NTSTATUS CreateControlDevice(_In_ PDRIVER_OBJECT DriverObject);
-VOID DeleteControlDevice(VOID);
+VOID AntiRansomwareDeleteControlDevice(VOID);
 NTSTATUS HandleDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp);
 
 //
@@ -359,9 +359,9 @@ Return Value:
     FltUnregisterFilter(gFilterHandle);
 
     //
-    // Delete control device
+    // Delete the control device
     //
-    DeleteControlDevice();
+    AntiRansomwareDeleteControlDevice();
 
     return STATUS_SUCCESS;
 }
@@ -1240,7 +1240,7 @@ Return Value:
 {
     NTSTATUS status;
     PEPROCESS process;
-    PUNICODE_STRING processImageName;
+    PUNICODE_STRING processImageName = NULL;
 
     //
     // Reference the process
@@ -1251,11 +1251,12 @@ Return Value:
     }
 
     //
-    // Get the process image name
+    // SAFE: Use SeLocateProcessImageName instead of PsGetProcessImageFileName
     //
-    processImageName = PsGetProcessImageFileName(process);
-    if (processImageName != NULL) {
+    status = SeLocateProcessImageName(process, &processImageName);
+    if (NT_SUCCESS(status) && processImageName != NULL) {
         RtlStringCchCopyW(ProcessName, BufferSize / sizeof(WCHAR), processImageName->Buffer);
+        ExFreePool(processImageName);
         status = STATUS_SUCCESS;
     } else {
         status = STATUS_UNSUCCESSFUL;
@@ -1419,7 +1420,7 @@ Return Value:
 }
 
 VOID
-DeleteControlDevice (
+AntiRansomwareDeleteControlDevice (
     VOID
     )
 /*++
