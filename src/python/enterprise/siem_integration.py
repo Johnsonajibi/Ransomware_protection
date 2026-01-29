@@ -374,22 +374,24 @@ class SIEMIntegration:
             if use_tls:
                 # Create a client context and explicitly restrict to modern TLS
                 context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
-                
+
                 # Enforce modern TLS versions (TLS 1.2+) explicitly.
-                # Prefer minimum_version when available (Python 3.7+),
-                # otherwise fall back to disabling older protocol versions.
+                # Prefer minimum_version / maximum_version when available (Python 3.7+)
+                # and also defensively disable legacy protocol versions via options.
                 if hasattr(ssl, "TLSVersion"):
                     context.minimum_version = ssl.TLSVersion.TLSv1_2
-                else:
-                    # Disable legacy SSL/TLS protocol versions if the flags exist.
-                    if hasattr(ssl, "OP_NO_SSLv2"):
-                        context.options |= ssl.OP_NO_SSLv2
-                    if hasattr(ssl, "OP_NO_SSLv3"):
-                        context.options |= ssl.OP_NO_SSLv3
-                    if hasattr(ssl, "OP_NO_TLSv1"):
-                        context.options |= ssl.OP_NO_TLSv1
-                    if hasattr(ssl, "OP_NO_TLSv1_1"):
-                        context.options |= ssl.OP_NO_TLSv1_1
+                    # If a MAXIMUM_SUPPORTED constant is available, use it to cap the range explicitly.
+                    if hasattr(ssl.TLSVersion, "MAXIMUM_SUPPORTED"):
+                        context.maximum_version = ssl.TLSVersion.MAXIMUM_SUPPORTED
+                # Regardless of TLSVersion support, disable legacy SSL/TLS protocol versions if the flags exist.
+                if hasattr(ssl, "OP_NO_SSLv2"):
+                    context.options |= ssl.OP_NO_SSLv2
+                if hasattr(ssl, "OP_NO_SSLv3"):
+                    context.options |= ssl.OP_NO_SSLv3
+                if hasattr(ssl, "OP_NO_TLSv1"):
+                    context.options |= ssl.OP_NO_TLSv1
+                if hasattr(ssl, "OP_NO_TLSv1_1"):
+                    context.options |= ssl.OP_NO_TLSv1_1
                 
                 # Load CA cert if provided
                 if self.config['tls_ca_cert']:
