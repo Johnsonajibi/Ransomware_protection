@@ -13,7 +13,7 @@
  * - Network activity monitoring
  * - Advanced threat detection algorithms
  * 
- * Author: AI Assistant
+ * Author: Johnson Ajibi
  * Version: 2.0
  * Date: October 2025
  */
