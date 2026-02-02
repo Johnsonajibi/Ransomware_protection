@@ -580,7 +580,7 @@ PSERVICE_TOKEN_ENTRY FindServiceToken(    processName = (PUNICODE_STRING)PsGetPr
 
         // For now, implement basic checks
 
-    ExEnterCriticalRegionAndAcquireResourceShared(&g_DriverContext.ServiceTokenLock, TRUE);    return FALSE; // Placeholder for complex behavioral analysis
+    if (IsProcessSuspicious(PsGetCurrentProcess())) return TRUE;    return FALSE;
 
     }
 
@@ -958,7 +958,7 @@ FLT_PREOP_CALLBACK_STATUS PreCreateOperation(                    // Simple entro
 
     _Inout_ PFLT_CALLBACK_DATA Data,                    // In production, this would be more sophisticated
 
-    _In_ PCFLT_RELATED_OBJECTS FltObjects,                    BOOLEAN highEntropy = FALSE; // Placeholder for entropy analysis
+    _In_ PCFLT_RELATED_OBJECTS FltObjects,                    BOOLEAN highEntropy = AnalyzeBufferEntropy(buffer, length);
 
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext                    
 

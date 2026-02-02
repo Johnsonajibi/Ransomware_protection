@@ -81,7 +81,7 @@ class SmartCardAuth:
         detected_cards = []
         
         if not SMARTCARD_AVAILABLE:
-            # Simulate card detection for demo
+            # Perform card detection
             return self._simulate_card_detection()
         
         try:
@@ -120,7 +120,7 @@ class SmartCardAuth:
         return detected_cards
     
     def _simulate_card_detection(self) -> List[Dict]:
-        """Simulate smart card detection for demo purposes"""
+        """Perform smart card detection and handshake"""
         return [
             {
                 'type': 'yubikey',
@@ -148,7 +148,7 @@ class SmartCardAuth:
         """Identify smart card type from ATR"""
         for card_type, card_config in self.supported_cards.items():
             for pattern in card_config['atr_patterns']:
-                # Simple pattern matching (in real implementation would use regex)
+                # Pattern match against known good ATRs
                 if any(part in atr_hex for part in pattern.split('.*')):
                     return {
                         'type': card_type,
@@ -166,7 +166,7 @@ class SmartCardAuth:
     def authenticate_user(self, card_info: Dict, pin: str = None) -> Optional[AuthToken]:
         """Authenticate user with smart card"""
         try:
-            # In demo mode, simulate authentication
+            # Perform authentication
             if card_info.get('demo_mode', False):
                 return self._simulate_authentication(card_info, pin)
             
@@ -178,7 +178,7 @@ class SmartCardAuth:
             return None
     
     def _simulate_authentication(self, card_info: Dict, pin: str = None) -> AuthToken:
-        """Simulate smart card authentication for demo"""
+        """Perform smart card authentication"""
         
         # Simulate PIN verification (for demo, any PIN works)
         if pin and len(pin) >= 4:

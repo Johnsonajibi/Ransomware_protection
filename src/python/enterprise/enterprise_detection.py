@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 def load_enterprise_config(config_path: str = "enterprise_config.json") -> Dict:
     """Load enterprise detection configuration from disk."""
     try:
+        # Resolve config path relative to this script if not found directly
+        if config_path == "enterprise_config.json" and not os.path.exists(config_path):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            potential_path = os.path.join(script_dir, config_path)
+            if os.path.exists(potential_path):
+                config_path = potential_path
+                
         with open(config_path, 'r', encoding='utf-8') as cfg:
             return json.load(cfg)
     except FileNotFoundError:

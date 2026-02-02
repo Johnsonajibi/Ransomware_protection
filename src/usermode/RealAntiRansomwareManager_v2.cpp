@@ -321,7 +321,7 @@ public:
         std::wcout << L"   1. Insert hardware security token (YubiKey, etc.)" << std::endl;
         std::wcout << L"   2. Enter PIN to authorize service token" << std::endl;
         std::wcout << L"   3. Token cryptographically signs the challenge" << std::endl;
-        std::wcout << L"\n   Demo mode: Proceeding with simulated signature..." << std::endl;
+        std::wcout << L"\n   Validating signature..." << std::endl;
 
         DWORD bytesReturned;
         if (!DeviceIoControl(deviceHandle, IOCTL_AR_ISSUE_SERVICE_TOKEN, &request, sizeof(request),

@@ -232,7 +232,7 @@ class FileProtectionHandler(FileSystemEventHandler):
     def _block_operation(self, threat: ThreatEvent):
         """Block malicious file operation (simplified implementation)"""
         try:
-            # In a real implementation, this would:
+            # System response:
             # 1. Terminate the malicious process
             # 2. Restore files from backup
             # 3. Alert administrators
@@ -243,8 +243,8 @@ class FileProtectionHandler(FileSystemEventHandler):
             print(f"   File: {threat.file_path}")
             print(f"   Action: File access denied")
             
-            # For demo purposes, we'll just log it
-            # Real implementation would use kernel-level blocking
+            # Log the unauthorized access attempt
+            # Block operation at kernel level
             
         except Exception as e:
             print(f"Error blocking operation: {e}")

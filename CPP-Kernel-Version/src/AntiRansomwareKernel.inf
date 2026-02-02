@@ -1,0 +1,47 @@
+[Version]
+Signature   = "$Windows NT$"
+Class       = "ActivityMonitor"
+ClassGuid   = {b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}
+Provider    = "AntiRansomware"
+DriverVer   = 10/29/2025,2.0.0.0
+CatalogFile = AntiRansomwareKernel.cat
+
+[DestinationDirs]
+DefaultDestDir          = 12
+AntiRansomware.DriverFiles     = 12
+
+[DefaultInstall]
+OptionDesc          = "AntiRansomware Driver"
+CopyFiles           = AntiRansomware.DriverFiles
+
+[DefaultInstall.Services]
+AddService          = %ServiceName%,,AntiRansomware.Service
+
+[DefaultUninstall]
+DelFiles            = AntiRansomware.DriverFiles
+
+[DefaultUninstall.Services]
+DelService          = %ServiceName%,0x200
+
+[AntiRansomware.Service]
+DisplayName      = %ServiceName%
+Description      = "Anti-Ransomware MiniFilter Driver"
+ServiceType      = 1
+StartType        = 3
+ErrorControl     = 1
+LoadOrderGroup   = "FSFilter Activity Monitor"
+AddReg           = AntiRansomware.AddRegistry
+Dependencies     = "FltMgr"
+
+[AntiRansomware.AddRegistry]
+HKR,"Instances","DefaultInstance",0x00000000,"AntiRansomware Instance"
+HKR,"Instances\AntiRansomware Instance","Altitude",0x00000000,"365000"
+HKR,"Instances\AntiRansomware Instance","Flags",0x00010001,0x0
+
+[AntiRansomware.DriverFiles]
+AntiRansomwareKernel.sys
+
+[Strings]
+ServiceName     = "AntiRansomwareKernel"
+ManufacturerName = "AntiRansomware"
+DiskId1         = "AntiRansomware Installation Disk"

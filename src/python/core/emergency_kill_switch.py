@@ -13,7 +13,7 @@ Features:
 - Comprehensive event logging
 - Manual and automatic triggers
 
-Author: Security Team
+Author: Johnson Ajibi
 Date: December 28, 2025
 """
 
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 import psutil
+import logging
 
 try:
     from token_gated_access import TokenGatedAccessControl
@@ -299,13 +300,14 @@ class EmergencyKillSwitch:
         except Exception as e:
             print(f"   ⚠️ Desktop alert failed: {e}")
     
-    def lift_lockdown(self, authorized_by: str, verification_token: Optional[str] = None):
+    def lift_lockdown(self, authorized_by: str, verification_token: Optional[str] = None, force: bool = False):
         """
         Lift emergency lockdown
         
         Args:
             authorized_by: Person authorizing lift
             verification_token: Optional authorization token
+            force: Bypass interactive confirmation (for GUI)
         """
         
         if not self.lockdown_active:
@@ -319,12 +321,13 @@ class EmergencyKillSwitch:
         print(f"Timestamp: {datetime.now().isoformat()}")
         
         # Verify authorization (in production, check token)
-        print("\n⚠️ WARNING: Verify system is clean before lifting lockdown")
-        response = input("Type 'CONFIRM' to proceed: ")
-        
-        if response != 'CONFIRM':
-            print("❌ Lockdown lift cancelled")
-            return
+        if not force:
+            print("\n⚠️ WARNING: Verify system is clean before lifting lockdown")
+            response = input("Type 'CONFIRM' to proceed: ")
+            
+            if response != 'CONFIRM':
+                print("❌ Lockdown lift cancelled")
+                return
         
         # Remove lockdown marker
         try:

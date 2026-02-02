@@ -1,0 +1,4 @@
+TARGETNAME=AntiRansomwareKernel 
+TARGETTYPE=DRIVER_LIBRARY 
+DRIVERTYPE=FS 
+SOURCES=antiransomware_kernel.c 

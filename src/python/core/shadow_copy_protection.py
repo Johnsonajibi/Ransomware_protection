@@ -12,7 +12,7 @@ Features:
 - Automatic shadow copy creation
 - Event logging with cryptographic signatures
 
-Author: Security Team
+Author: Johnson Ajibi
 Date: December 28, 2025
 """
 

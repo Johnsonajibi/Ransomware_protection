@@ -11,7 +11,7 @@ Supports:
 - Event enrichment with context
 - Reliable delivery with retries
 
-Author: Security Team
+Author: Johnson Ajibi
 Date: December 28, 2025
 """
 

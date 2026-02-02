@@ -411,7 +411,7 @@ class BlockingThreatDetector(FileSystemEventHandler):
                                      # shell=True removed for security
                         capture_output=True, capture_output=True)
                         if not source_path.exists():
-                            # File deleted, create placeholder in quarantine
+                            # File deleted, create marker file in quarantine
                             with open(quarantine_path, 'w') as f:
                                 f.write("FILE FORCIBLY DELETED - THREAT BLOCKED")
                     except Exception:

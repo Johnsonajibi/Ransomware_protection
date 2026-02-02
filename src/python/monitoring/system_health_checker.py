@@ -11,7 +11,7 @@ Features:
 - Recent security event correlation
 - Threat indicator tracking
 
-Author: Security Team
+Author: Johnson Ajibi
 Date: December 28, 2025
 """
 
@@ -174,8 +174,14 @@ class SystemHealthChecker:
         """
         
         try:
-            for proc in psutil.process_iter(['pid', 'name', 'exe']):
+            current_pid = os.getpid()
+            
+            for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
                 try:
+                    # Skip our own process
+                    if proc.info['pid'] == current_pid:
+                        continue
+                        
                     proc_name = proc.info['name'].lower() if proc.info['name'] else ''
                     proc_exe = proc.info['exe'].lower() if proc.info['exe'] else ''
                     
@@ -188,8 +194,13 @@ class SystemHealthChecker:
                     # Check against suspicious patterns
                     for pattern in self.suspicious_patterns:
                         if pattern in proc_name or pattern in proc_exe:
+                            # Verify if it's just a Python script we trust
+                            cmdline = proc.info.get('cmdline', [])
+                            if cmdline and any('desktop_app.py' in arg for arg in cmdline):
+                                continue
+                                
                             self.threat_indicators.append(
-                                f"Suspicious process: {proc.info['name']} (PID: {proc.info['pid']})"
+                                f"Suspicious process: {proc.info['name']} (PID: {proc.info['pid']}) - Matched '{pattern}'"
                             )
                             return True
                     

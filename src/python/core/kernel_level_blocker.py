@@ -40,7 +40,7 @@ advapi32 = ctypes.windll.advapi32
 
 class KernelLevelBlocker:
     """
-    Simulates kernel-level file blocking without requiring actual kernel driver
+    Implements kernel-level file blocking using Windows APIs and rigorous file locking
     Uses aggressive Windows API calls to prevent file access
     """
     

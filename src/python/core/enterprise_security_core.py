@@ -11,7 +11,7 @@ Architecture:
 - Zero-knowledge proof protocols
 - Hardware security module (HSM) emulation
 
-Author: Senior Security Engineer
+Author: Johnson Ajibi
 Date: December 2025
 """
 

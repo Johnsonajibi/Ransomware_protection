@@ -12,6 +12,14 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
+
+# Add backend paths
+current_dir = Path(__file__).parent.absolute()
+sys.path.append(str(current_dir / "src" / "python" / "core"))
+sys.path.append(str(current_dir / "src" / "python" / "monitoring"))
+sys.path.append(str(current_dir / "src" / "python" / "enterprise"))
+sys.path.append(str(current_dir / "src" / "python" / "utils"))
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QListWidget, QTextEdit, QTabWidget,
@@ -68,9 +76,9 @@ def setup_logging():
 LOG_FILE_PATH = setup_logging()
 logger = logging.getLogger('AntiRansomware')
 
-# Suppress noisy third-party library warnings
-logging.getLogger('device_fingerprinting').setLevel(logging.ERROR)
-logging.getLogger('pqcdualusb').setLevel(logging.ERROR)
+# Suppress noisy third-party library warnings - BUT ALLOW info for enhanced logging
+logging.getLogger('device_fingerprinting').setLevel(logging.INFO)
+logging.getLogger('pqcdualusb').setLevel(logging.INFO)
 
 # Import backend functionality
 try:
@@ -389,6 +397,38 @@ class MainWindow(QMainWindow):
         
         # Apply dark theme
         self.apply_theme()
+    
+    def check_drives_for_tokens(self, drives):
+        """Auto-scan drives for valid tokens"""
+        found_token = False
+        try:
+            import glob
+            import os
+            
+            for drive in drives:
+                drive_path = str(drive)
+                # Look for tokens
+                quantum_tokens = glob.glob(os.path.join(drive_path, "quantum_token_*.qkey"))
+                legacy_tokens = glob.glob(os.path.join(drive_path, "protection_token_*.key"))
+                all_tokens = quantum_tokens + legacy_tokens
+                
+                for token_path in all_tokens:
+                    if self.engine and self.engine.token_manager.validate_secure_token(token_path):
+                        self.token_status_label.setText(f"✅ Valid token detected: {os.path.basename(token_path)}")
+                        self.token_info_text.append(f"\n[Auto-Detect] Found valid token on {drive_path}")
+                        found_token = True
+                        
+                        # Auto-select this drive in the list
+                        items = self.usb_drives_list.findItems(f"📀 {drive_path}", Qt.MatchFlag.MatchContains)
+                        if items:
+                            self.usb_drives_list.setCurrentItem(items[0])
+                        return
+            
+            if not found_token:
+                self.token_status_label.setText("❌ No USB token detected")
+                
+        except Exception as e:
+            print(f"Token auto-scan error: {e}")
     
     def create_header(self):
         """Create header with status"""
@@ -971,10 +1011,17 @@ class MainWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
     
+    
     def create_alerts_tab(self):
         """Create email/SIEM alerts configuration tab"""
         widget = QWidget()
-        layout = QVBoxLayout()
+        
+        # Wrap in Scroll Area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        
+        content_widget = QWidget()
+        content_layout = QVBoxLayout()
         
         # Email alerting
         email_group = QGroupBox("📧 Email Alerting")
@@ -1006,7 +1053,7 @@ class MainWindow(QMainWindow):
         email_layout.addRow("", test_email_btn)
         
         email_group.setLayout(email_layout)
-        layout.addWidget(email_group)
+        content_layout.addWidget(email_group)
         
         # SIEM integration
         siem_group = QGroupBox("🔍 SIEM Integration")
@@ -1037,7 +1084,7 @@ class MainWindow(QMainWindow):
         siem_layout.addRow("", test_siem_btn)
         
         siem_group.setLayout(siem_layout)
-        layout.addWidget(siem_group)
+        content_layout.addWidget(siem_group)
         
         # Rate limiting
         rate_group = QGroupBox("⏱️ Rate Limiting")
@@ -1054,15 +1101,23 @@ class MainWindow(QMainWindow):
         rate_layout.addRow("Max emails per day:", self.max_emails_day)
         
         rate_group.setLayout(rate_layout)
-        layout.addWidget(rate_group)
+        content_layout.addWidget(rate_group)
         
         # Save button
         save_alerts_btn = QPushButton("💾 Save Alert Settings")
         save_alerts_btn.clicked.connect(self.save_alert_settings)
-        layout.addWidget(save_alerts_btn)
+        content_layout.addWidget(save_alerts_btn)
         
-        layout.addStretch()
-        widget.setLayout(layout)
+        content_layout.addStretch()
+        content_widget.setLayout(content_layout)
+        
+        scroll_area.setWidget(content_widget)
+        
+        # Main layout for the tab
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(scroll_area)
+        widget.setLayout(main_layout)
+        
         return widget
     
     def create_shadow_tab(self):
@@ -2052,6 +2107,8 @@ class MainWindow(QMainWindow):
                             drive_str = str(drive)
                             self.usb_drives_list.addItem(f"📀 {drive_str}")
                         self.statusBar().showMessage(f"Found {len(drives)} USB drive(s)")
+                        # Auto-check for tokens
+                        self.check_drives_for_tokens(drives)
                     else:
                         self.usb_drives_list.addItem("No USB drives detected")
                         self.statusBar().showMessage("No USB drives found")
@@ -2067,6 +2124,8 @@ class MainWindow(QMainWindow):
                         for drive in drives:
                             self.usb_drives_list.addItem(f"📀 {drive}")
                         self.statusBar().showMessage(f"Found {len(drives)} USB drive(s)")
+                        # Auto-check for tokens
+                        self.check_drives_for_tokens(drives)
                     else:
                         self.usb_drives_list.addItem("No USB drives detected")
                         self.statusBar().showMessage("No USB drives found")
@@ -2343,7 +2402,7 @@ class MainWindow(QMainWindow):
                 try:
                     import os
                     user = os.getlogin() if hasattr(os, 'getlogin') else 'GUI_USER'
-                    self.kill_switch.lift_lockdown(authorized_by=user)
+                    self.kill_switch.lift_lockdown(authorized_by=user, force=True)
                     
                     self.lockdown_status_label.setText("Status: Normal Operations")
                     self.lockdown_status_label.setStyleSheet("color: #00ff00; font-weight: bold;")

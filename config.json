@@ -1,0 +1,12 @@
+{
+  "protected_folders": [
+    {
+      "path": "C:/Users/ajibi/OneDrive/Desktop/ant",
+      "policy_id": "high_security",
+      "protection_level": "high",
+      "usb_required": true,
+      "created_at": "2026-01-31T00:05:17.980617",
+      "active": true
+    }
+  ]
+}

@@ -5380,7 +5380,7 @@ class UnifiedCLI:
                     print("Monitoring security events (press Ctrl+C to stop)...")
                     import time
                     while True:
-                        # Placeholder: would integrate with actual event stream
+                        # Integration point for security event stream
                         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Monitoring active...")
                         time.sleep(5)
                 except KeyboardInterrupt:

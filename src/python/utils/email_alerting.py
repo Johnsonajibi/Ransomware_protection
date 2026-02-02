@@ -12,7 +12,7 @@ Features:
 - TLS/SSL security
 - Configurable recipients
 
-Author: Security Team
+Author: Johnson Ajibi
 Date: December 28, 2025
 """
 

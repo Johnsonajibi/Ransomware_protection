@@ -15,7 +15,7 @@
  * - System performance monitoring
  * - Comprehensive logging and reporting
  * 
- * Author: AI Assistant
+ * Author: Johnson Ajibi
  * Version: 2.0
  * Date: October 2025
  */
@@ -85,7 +85,7 @@
 #define IOCTL_REMOVE_PROTECTED_PROCESS CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // Color scheme (Dark theme)
-#define COLOR_BACKGROUND RGB(40, 40, 40)
+#define UI_COLOR_BACKGROUND RGB(40, 40, 40)
 #define COLOR_PANEL RGB(50, 50, 50)
 #define COLOR_TEXT RGB(255, 255, 255)
 #define COLOR_ACCENT RGB(0, 120, 215)
@@ -130,6 +130,7 @@ LRESULT CALLBACK QuarantineDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
 
 // Main application class
 class AntiRansomwareClient {
+    friend LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 private:
     HWND m_hMainWindow;
     HWND m_hStatusBar;
@@ -210,7 +211,7 @@ public:
         CreateFonts();
         
         // Create brushes
-        m_hBackgroundBrush = CreateSolidBrush(COLOR_BACKGROUND);
+        m_hBackgroundBrush = CreateSolidBrush(UI_COLOR_BACKGROUND);
         m_hPanelBrush = CreateSolidBrush(COLOR_PANEL);
 
         // Register window class

@@ -45,6 +45,7 @@
 #define IOCTL_SET_QUARANTINE_MODE       CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80C, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 #define DEVICE_PATH L"\\\\.\\AntiRansomwareKernel"
+#define DEFAULT_GUI_PASSWORD L"AdminKey@2026"
 
 // Structures matching kernel driver
 typedef struct _USB_TOKEN {
@@ -525,7 +526,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         {
                             wchar_t filePath[MAX_PATH] = {};
                             if (GetFileDialog(hwnd, filePath, true)) {
-                                g_client.EncryptFile(filePath, L"password123");
+                                g_client.EncryptFile(filePath, DEFAULT_GUI_PASSWORD);
                             }
                         }
                         break;
@@ -534,7 +535,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         {
                             wchar_t filePath[MAX_PATH] = {};
                             if (GetFileDialog(hwnd, filePath, false)) {
-                                g_client.DecryptFile(filePath, L"password123");
+                                g_client.DecryptFile(filePath, DEFAULT_GUI_PASSWORD);
                             }
                         }
                         break;
@@ -734,12 +735,17 @@ void RunCLI() {
             case 4:
                 wprintf(L"Enter file path to encrypt: ");
                 wscanf_s(L"%s", input, MAX_PATH);
-                g_client.EncryptFile(input, L"password123");
+                wchar_t password[64];
+                wprintf(L"Enter encryption password: ");
+                wscanf_s(L"%s", password, 64);
+                g_client.EncryptFile(input, password);
                 break;
             case 5:
                 wprintf(L"Enter file path to decrypt: ");
                 wscanf_s(L"%s", input, MAX_PATH);
-                g_client.DecryptFile(input, L"password123");
+                wprintf(L"Enter decryption password: ");
+                wscanf_s(L"%s", password, 64);
+                g_client.DecryptFile(input, password);
                 break;
             case 6:
                 wprintf(L"Enter USB device name: ");

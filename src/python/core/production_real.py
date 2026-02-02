@@ -68,6 +68,27 @@ class ProtectedFolder:
     quarantine_count: int = 0
     last_access: Optional[datetime] = None
 
+def validate_path(path: str, base_dir: str = None) -> bool:
+    """Validate path to prevent directory traversal attacks."""
+    if not path or not isinstance(path, str):
+        return False
+    try:
+        p = Path(path).resolve()
+        normalized = str(p)
+        if '..' in path or '..' in normalized:
+            return False
+        if base_dir:
+            if not p.is_relative_to(Path(base_dir).resolve()):
+                return False
+        if os.name == 'nt':
+            if len(normalized) >= 2 and normalized[1] == ':' and not normalized[0].isalpha():
+                return False
+            if normalized.startswith('\\\\'):
+                return False
+        return True
+    except:
+        return False
+
 @dataclass
 class ThreatEvent:
     timestamp: datetime

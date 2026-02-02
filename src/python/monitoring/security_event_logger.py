@@ -11,7 +11,7 @@ Features:
 - Tamper detection
 - Chronological audit trail
 
-Author: Security Team
+Author: Johnson Ajibi
 Date: December 28, 2025
 """
 

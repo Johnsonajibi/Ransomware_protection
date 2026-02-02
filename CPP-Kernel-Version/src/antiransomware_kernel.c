@@ -13,7 +13,7 @@
  * - Network activity monitoring
  * - Advanced threat detection algorithms
  * 
- * Author: AI Assistant
+ * Author: Johnson Ajibi
  * Version: 2.0
  * Date: October 2025
  */
@@ -32,6 +32,12 @@
 #define ANTIRANSOMWARE_DEVICE_NAME    L"\\Device\\AntiRansomwareFilter"
 #define ANTIRANSOMWARE_PORT_NAME      L"\\AntiRansomwarePort"
 #define ANTIRANSOMWARE_TAG            'rAnA'
+
+// Debug tracing fallback
+#ifndef PT_DBG_PRINT
+#define PTDBG_TRACE_ROUTINES            0x00000001
+#define PT_DBG_PRINT(Level, Msg)        DbgPrint Msg
+#endif
 
 // IOCTL codes for communication with user-mode application
 #define IOCTL_START_PROTECTION         CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -308,7 +314,7 @@ Return Value:
     }
 
     if (!NT_SUCCESS(status)) {
-        DeleteControlDevice();
+        AntiRansomwareDeleteControlDevice();
     }
 
     return status;

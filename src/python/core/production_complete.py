@@ -730,6 +730,30 @@ def select_folder():
     """Folder selection interface"""
     return render_template_string(FOLDER_SELECTOR_TEMPLATE)
 
+def is_safe_path(path):
+    """Check if the path is safe from traversal attacks"""
+    if not path:
+        return False
+    try:
+        # Normalize and check for traversal
+        abs_path = os.path.abspath(path)
+        if '..' in path or not abs_path:
+            return False
+            
+        # Basic sanity check: reject system critical directories
+        forbidden = [
+            'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
+            'C:\\Users\\All Users', 'C:\\System Volume Information'
+        ]
+        abs_path_lower = abs_path.lower()
+        for f in forbidden:
+            if abs_path_lower.startswith(f.lower()):
+                return False
+                
+        return True
+    except:
+        return False
+
 @app.route('/api/add-folder', methods=['POST'])
 def api_add_folder():
     """Add a folder to protection"""
@@ -740,10 +764,9 @@ def api_add_folder():
         usb_required = data.get('usb_required', True)
         kernel_protection = data.get('kernel_protection', True)
         
-        if not path:
-            return jsonify({'success': False, 'error': 'Invalid folder path'})
+        if not path or not is_safe_path(path):
+            return jsonify({'success': False, 'error': 'Invalid or unsafe folder path'})
             
-        # SAFE: Sanitize path
         path = os.path.abspath(path)
         
         if not os.path.exists(path):
@@ -848,7 +871,10 @@ def api_browse_folders():
     try:
         data = request.get_json()
         path = data.get('path', 'C:\\')
-        # SAFE: Sanitize path
+        
+        if not is_safe_path(path):
+             return jsonify({'success': False, 'error': 'Unsafe folder path rejected'})
+             
         path = os.path.abspath(path)
         
         # Normalize path

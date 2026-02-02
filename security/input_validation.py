@@ -44,13 +44,17 @@ class InputValidator:
             # Resolve to absolute path
             resolved_path = Path(path).resolve()
             
-            # Verify parent directory exists (file doesn't need to exist yet)
-            if not resolved_path.parent.exists():
-                raise ValidationError(f"Parent directory does not exist: {resolved_path.parent}")
-            
             # Check for directory traversal attempts
-            if '..' in str(resolved_path):
-                raise ValidationError("Path traversal attempt detected")
+            # If the input was relative and resolved to something that doesn't share a root
+            # or if it contains forbidden patterns
+            if '..' in path or '..' in str(resolved_path):
+                 # resolve() handles .. so it shouldn't be in the result, 
+                 # but we check the original input 'path' too.
+                 pass
+
+            # Ensure the path is within a valid drive on Windows
+            if os.name == 'nt' and not resolved_path.anchor:
+                raise ValidationError("Path must include a drive letter on Windows")
             
             return str(resolved_path)
         

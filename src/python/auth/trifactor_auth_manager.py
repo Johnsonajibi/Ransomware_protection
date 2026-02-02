@@ -7,7 +7,7 @@ Novel hardware-rooted token authentication combining:
 2. Multi-dimensional device fingerprinting (hardware binding)
 3. Post-quantum USB authentication (physical possession)
 
-Author: Security Team
+Author: Johnson Ajibi
 Date: December 26, 2025
 """
 

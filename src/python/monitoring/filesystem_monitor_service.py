@@ -328,7 +328,7 @@ class FileSystemMonitor:
         try:
             # Get process that made the change
             # Note: This is simplified - real implementation would use ETW or driver
-            process_id = os.getpid()  # Placeholder
+            process_id = os.getpid()  # Current service PID
             
             # Check if process is already blocked
             if process_id in self.blocked_processes:

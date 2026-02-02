@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import subprocess
 import tempfile
+from pathlib import Path
 try:
     from urllib.parse import unquote
 except ImportError:
@@ -29,45 +30,34 @@ def validate_path(path: str, base_dir: str = None) -> bool:
     Returns:
         True if path is safe, False otherwise
     """
-    if not path or not isinstance(path, str):
-        return False
-    
-    # Decode URL-encoded characters to catch %2e%2e attacks
-    decoded_path = unquote(path)
-    
-    # Get absolute and normalized path
-    abs_path = os.path.abspath(decoded_path)
-    normalized = os.path.normpath(abs_path)
-    
-    # Check for directory traversal patterns
-    if '..' in normalized or '..' in decoded_path:
-        return False
-    
-    # Check for home directory expansion
-    if '~' in decoded_path:
-        return False
-    
-    # If base_dir specified, ensure path is within it
-    if base_dir:
-        base_abs = os.path.abspath(base_dir)
-        # Ensure the normalized path is within base_abs (with proper separator check)
-        if not (normalized.startswith(base_abs) and 
-                (len(normalized) == len(base_abs) or 
-                 normalized[len(base_abs):len(base_abs)+1] in (os.sep, os.altsep) or
-                 normalized[len(base_abs):len(base_abs)+1] == '')):
+    try:
+        # Decode and resolve path
+        decoded_path = unquote(path)
+        p = Path(decoded_path).resolve()
+        normalized = str(p)
+        
+        # Basic traversal check
+        if '..' in decoded_path or '..' in normalized:
             return False
-    
-    # Validate Windows paths
-    if os.name == 'nt':
-        # Check for valid drive letter
-        if len(normalized) >= 2 and normalized[1] == ':':
-            if not normalized[0].isalpha():
+            
+        # If base_dir specified, ensure p is within it
+        if base_dir:
+            base_p = Path(base_dir).resolve()
+            if not p.is_relative_to(base_p):
                 return False
-        # Block UNC paths for security (per requirement - prevents network share attacks)
-        if normalized.startswith('\\\\'):
-            return False
-    
-    return True
+                
+        if os.name == 'nt':
+            # Check for valid drive letter
+            if len(normalized) >= 2 and normalized[1] == ':':
+                if not normalized[0].isalpha():
+                    return False
+            # Block UNC paths for security
+            if normalized.startswith('\\\\'):
+                return False
+                
+        return True
+    except (ValueError, OSError, RuntimeError):
+        return False
 
 try:
     import psutil
