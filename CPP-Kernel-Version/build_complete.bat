@@ -97,6 +97,11 @@ if !errorlevel! neq 0 (
 )
 
 echo Compiling user application...
+
+REM Kill existing instance if running to prevent LNK1104 error
+taskkill /F /IM AntiRansomware.exe >nul 2>&1
+timeout /t 1 /nobreak >nul
+
 cl.exe /EHsc /std:c++17 /DUNICODE /D_UNICODE ^
     "!SRC_DIR!\antiransomware_client.cpp" ^
     /link user32.lib gdi32.lib shell32.lib kernel32.lib fltlib.lib advapi32.lib ^

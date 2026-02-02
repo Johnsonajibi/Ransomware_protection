@@ -1,0 +1,1 @@
+C:\Users\ajibi\Music\Anti-Ransomeware\CPP-Kernel-Version\src\x64\Release\AntiRansomwareKernel.sys

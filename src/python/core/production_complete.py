@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 PRODUCTION ANTI-RANSOMWARE PROTECTION SYSTEM
+Author: Johnson Ajibi
 Complete implementation with ALL original features:
 - USB dongle authentication
 - Folder selection

@@ -1,6 +1,7 @@
 """
 Anti-Ransomware Desktop Application
 Modern GUI for ransomware protection management
+Author: Johnson Ajibi
 """
 
 import sys
@@ -14,11 +15,13 @@ from datetime import datetime
 from pathlib import Path
 
 # Add backend paths
+# Add backend paths
 current_dir = Path(__file__).parent.absolute()
-sys.path.append(str(current_dir / "src" / "python" / "core"))
-sys.path.append(str(current_dir / "src" / "python" / "monitoring"))
-sys.path.append(str(current_dir / "src" / "python" / "enterprise"))
-sys.path.append(str(current_dir / "src" / "python" / "utils"))
+# Since we are in src/python, we just need to append the subdirectories
+sys.path.append(str(current_dir / "core"))
+sys.path.append(str(current_dir / "monitoring"))
+sys.path.append(str(current_dir / "enterprise"))
+sys.path.append(str(current_dir / "utils"))
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -76,8 +79,8 @@ def setup_logging():
 LOG_FILE_PATH = setup_logging()
 logger = logging.getLogger('AntiRansomware')
 
-# Suppress noisy third-party library warnings - BUT ALLOW info for enhanced logging
-logging.getLogger('device_fingerprinting').setLevel(logging.INFO)
+# Suppress noisy third-party library warnings (benign subprocess failovers)
+logging.getLogger('device_fingerprinting').setLevel(logging.ERROR)
 logging.getLogger('pqcdualusb').setLevel(logging.INFO)
 
 # Import backend functionality
@@ -133,12 +136,17 @@ except ImportError:
     ShadowCopyProtection = None
 
 # TPM integration (hardware-backed keys/attestation)
+# TPM integration (hardware-backed keys/attestation)
 try:
-    from tpm_integration import TPMManager
+    from tpm.tpm_pqc_integration import TPMManager
     HAS_TPM_MANAGER = True
 except ImportError:
-    HAS_TPM_MANAGER = False
-    TPMManager = None
+    try:
+        from tpm_integration import TPMManager
+        HAS_TPM_MANAGER = True
+    except ImportError:
+        HAS_TPM_MANAGER = False
+        TPMManager = None
 
 # Kernel protection (filter driver)
 try:

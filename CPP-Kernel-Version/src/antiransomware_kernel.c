@@ -14,8 +14,8 @@
  * - Advanced threat detection algorithms
  * 
  * Author: Johnson Ajibi
- * Version: 2.0
- * Date: October 2025
+ * Version: 2.1
+ * Date: February 2026
  */
 
 #include <fltKernel.h>
@@ -40,11 +40,22 @@
 #endif
 
 // IOCTL codes for communication with user-mode application
-#define IOCTL_START_PROTECTION         CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_STOP_PROTECTION          CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_GET_STATISTICS           CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_ADD_PROTECTED_PROCESS    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_REMOVE_PROTECTED_PROCESS CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_ANY_ACCESS)
+// MUST MATCH USER MODE APPLICATION EXACTLY
+#define IOCTL_AR_SET_PROTECTION      CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_AR_GET_STATUS          CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_AR_GET_STATISTICS      CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_AR_SET_DB_POLICY       CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_AR_ISSUE_SERVICE_TOKEN CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_AR_REVOKE_SERVICE_TOKEN CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_AR_LIST_SERVICE_TOKENS CTL_CODE(FILE_DEVICE_UNKNOWN, 0x807, METHOD_BUFFERED, FILE_READ_ACCESS)
+
+// Protection levels
+enum ProtectionLevel {
+    ProtectionDisabled = 0,
+    ProtectionMonitoring = 1,
+    ProtectionActive = 2,
+    ProtectionMaximum = 3
+};
 
 // Threat levels
 typedef enum _THREAT_LEVEL {
@@ -57,12 +68,15 @@ typedef enum _THREAT_LEVEL {
 
 // Protection statistics
 typedef struct _PROTECTION_STATISTICS {
-    ULONG FilesScanned;
-    ULONG ThreatsBlocked;
-    ULONG ProcessesMonitored;
-    ULONG RegistryOperationsBlocked;
-    ULONG NetworkConnectionsBlocked;
-    ULONG SuspiciousActivities;
+    volatile LONG FilesBlocked;
+    volatile LONG ProcessesBlocked;
+    volatile LONG EncryptionAttempts;
+    volatile LONG TotalOperations;
+    volatile LONG SuspiciousPatterns;
+    volatile LONG ServiceTokenValidations;
+    volatile LONG ServiceTokenRejections;
+    volatile LONG FilesScanned;
+    volatile LONG ThreatsBlocked;
 } PROTECTION_STATISTICS, *PPROTECTION_STATISTICS;
 
 // Process information structure
@@ -90,7 +104,7 @@ PFLT_FILTER gFilterHandle;
 PFLT_PORT gServerPort;
 PFLT_PORT gClientPort;
 PDEVICE_OBJECT gDeviceObject;
-BOOLEAN gProtectionEnabled = FALSE;
+volatile LONG gProtectionLevel = ProtectionDisabled; // Default to disabled to prevent boot loops
 PROTECTION_STATISTICS gStatistics = {0};
 FAST_MUTEX gStatisticsMutex;
 FAST_MUTEX gProcessListMutex;
@@ -209,26 +223,6 @@ DriverEntry (
     _In_ PDRIVER_OBJECT DriverObject,
     _In_ PUNICODE_STRING RegistryPath
     )
-/*++
-
-Routine Description:
-
-    This is the initialization routine for this miniFilter driver.  This
-    registers with FltMgr and initializes all global data structures.
-
-Arguments:
-
-    DriverObject - Pointer to driver object created by the system to
-        represent this driver.
-
-    RegistryPath - Unicode string identifying where the parameters for this
-        driver are located in the registry.
-
-Return Value:
-
-    Routine can return non success error codes.
-
---*/
 {
     NTSTATUS status;
     OBJECT_ATTRIBUTES oa;
@@ -299,7 +293,8 @@ Return Value:
                 status = FltStartFiltering(gFilterHandle);
 
                 if (NT_SUCCESS(status)) {
-                    gProtectionEnabled = TRUE;
+                    // Don't enable protection by default - wait for user mode to enable it
+                    gProtectionLevel = ProtectionDisabled;
                     PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
                                  ("AntiRansomware!DriverEntry: Filter started successfully\n"));
                 } else {
@@ -324,24 +319,6 @@ NTSTATUS
 AntiRansomwareUnload (
     _In_ FLT_FILTER_UNLOAD_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This is the unload routine for this miniFilter driver. This is called
-    when the minifilter is about to be unloaded. We can fail this unload
-    request if this is not a mandatory unload indicated by the Flags
-    parameter.
-
-Arguments:
-
-    Flags - Indicating if this is a mandatory unload.
-
-Return Value:
-
-    Returns the final status of this operation.
-
---*/
 {
     UNREFERENCED_PARAMETER(Flags);
 
@@ -350,7 +327,7 @@ Return Value:
     PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
                  ("AntiRansomware!AntiRansomwareUnload: Entered\n"));
 
-    gProtectionEnabled = FALSE;
+    gProtectionLevel = ProtectionDisabled;
 
     //
     // Close communication port
@@ -382,26 +359,6 @@ AntiRansomwareInstanceSetup (
     _In_ DEVICE_TYPE VolumeDeviceType,
     _In_ FLT_FILESYSTEM_TYPE VolumeFilesystemType
     )
-/*++
-
-Routine Description:
-
-    This routine is called whenever a new instance is created on a volume. This
-    gives us a chance to decide if we need to attach to this volume or not.
-
-Arguments:
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance and its associated volume.
-
-    Flags - Flags describing the reason for this attach request.
-
-Return Value:
-
-    STATUS_SUCCESS - attach
-    STATUS_FLT_DO_NOT_ATTACH - do not attach
-
---*/
 {
     UNREFERENCED_PARAMETER(FltObjects);
     UNREFERENCED_PARAMETER(Flags);
@@ -413,9 +370,6 @@ Return Value:
     PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
                  ("AntiRansomware!AntiRansomwareInstanceSetup: Entered\n"));
 
-    //
-    // Attach to all volumes
-    //
     return STATUS_SUCCESS;
 }
 
@@ -424,24 +378,6 @@ AntiRansomwareInstanceTeardownStart (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _In_ FLT_INSTANCE_TEARDOWN_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This routine is called at the start of instance teardown.
-
-Arguments:
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance and its associated volume.
-
-    Flags - Reason why this instance is being deleted.
-
-Return Value:
-
-    None.
-
---*/
 {
     UNREFERENCED_PARAMETER(FltObjects);
     UNREFERENCED_PARAMETER(Flags);
@@ -457,24 +393,6 @@ AntiRansomwareInstanceTeardownComplete (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _In_ FLT_INSTANCE_TEARDOWN_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This routine is called at the end of instance teardown.
-
-Arguments:
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance and its associated volume.
-
-    Flags - Reason why this instance is being deleted.
-
-Return Value:
-
-    None.
-
---*/
 {
     UNREFERENCED_PARAMETER(FltObjects);
     UNREFERENCED_PARAMETER(Flags);
@@ -495,28 +413,6 @@ AntiRansomwarePreCreate (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
     )
-/*++
-
-Routine Description:
-
-    This routine is a pre-operation dispatch routine for create operations.
-
-Arguments:
-
-    Data - Pointer to the filter callbackData that is passed to us.
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance, its associated volume and
-        file object.
-
-    CompletionContext - The context for the completion routine for this
-        operation.
-
-Return Value:
-
-    The return value is the status of the operation.
-
---*/
 {
     NTSTATUS status;
     PFLT_FILE_NAME_INFORMATION nameInfo = NULL;
@@ -526,7 +422,23 @@ Return Value:
     UNREFERENCED_PARAMETER(FltObjects);
     UNREFERENCED_PARAMETER(CompletionContext);
 
-    if (!gProtectionEnabled) {
+    // CRITICAL FIX: IRQL Check
+    // FltGetFileNameInformation cannot be called at IRQL > PASSIVE_LEVEL for normalized names
+    if (KeGetCurrentIrql() > PASSIVE_LEVEL) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    if (gProtectionLevel == ProtectionDisabled) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    // Skip Paging I/O
+    if (FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO)) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+    
+    // Skip kernel mode operations
+    if (Data->RequestorMode == KernelMode) {
         return FLT_PREOP_SUCCESS_NO_CALLBACK;
     }
 
@@ -557,7 +469,7 @@ Return Value:
     KeQuerySystemTime(&context.Timestamp);
 
     //
-    // Get process name
+    // Get process name - Safe to call at PASSIVE_LEVEL
     //
     GetProcessName(context.ProcessId, context.ProcessName, sizeof(context.ProcessName));
 
@@ -580,7 +492,7 @@ Return Value:
         //
         // Block the operation for critical threats
         //
-        if (threatLevel == ThreatLevelCritical) {
+        if (threatLevel >= ThreatLevelCritical && gProtectionLevel >= ProtectionActive) {
             PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
                          ("AntiRansomware!AntiRansomwarePreCreate: Blocking operation for %wZ\n",
                           &nameInfo->Name));
@@ -603,29 +515,6 @@ AntiRansomwarePostCreate (
     _In_opt_ PVOID CompletionContext,
     _In_ FLT_POST_OPERATION_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This routine is a post-operation dispatch routine for create operations.
-
-Arguments:
-
-    Data - Pointer to the filter callbackData that is passed to us.
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance, its associated volume and
-        file object.
-
-    CompletionContext - The completion context set in the pre-operation routine.
-
-    Flags - Denotes whether the completion is successful or is being drained.
-
-Return Value:
-
-    The return value is the status of the operation.
-
---*/
 {
     UNREFERENCED_PARAMETER(Data);
     UNREFERENCED_PARAMETER(FltObjects);
@@ -641,28 +530,6 @@ AntiRansomwarePreWrite (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
     )
-/*++
-
-Routine Description:
-
-    This routine is a pre-operation dispatch routine for write operations.
-
-Arguments:
-
-    Data - Pointer to the filter callbackData that is passed to us.
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance, its associated volume and
-        file object.
-
-    CompletionContext - The context for the completion routine for this
-        operation.
-
-Return Value:
-
-    The return value is the status of the operation.
-
---*/
 {
     NTSTATUS status;
     PFLT_FILE_NAME_INFORMATION nameInfo = NULL;
@@ -672,7 +539,22 @@ Return Value:
     UNREFERENCED_PARAMETER(FltObjects);
     UNREFERENCED_PARAMETER(CompletionContext);
 
-    if (!gProtectionEnabled) {
+    // CRITICAL FIX: IRQL Check
+    if (KeGetCurrentIrql() > PASSIVE_LEVEL) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    if (gProtectionLevel == ProtectionDisabled) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    // Skip Paging I/O
+    if (FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO)) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    // Skip kernel mode operations
+    if (Data->RequestorMode == KernelMode) {
         return FLT_PREOP_SUCCESS_NO_CALLBACK;
     }
 
@@ -710,7 +592,7 @@ Return Value:
     //
     // Check for encryption patterns in write operation
     //
-    context.IsEncryption = TRUE; // Simplified - would analyze buffer content
+    context.IsEncryption = TRUE; // Simplified - would analyze buffer content in real world
 
     //
     // Analyze threat level
@@ -731,7 +613,7 @@ Return Value:
         //
         // Block critical threats
         //
-        if (threatLevel == ThreatLevelCritical) {
+        if (threatLevel >= ThreatLevelCritical && gProtectionLevel >= ProtectionActive) {
             PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
                          ("AntiRansomware!AntiRansomwarePreWrite: Blocking write to %wZ\n",
                           &nameInfo->Name));
@@ -754,29 +636,6 @@ AntiRansomwarePostWrite (
     _In_opt_ PVOID CompletionContext,
     _In_ FLT_POST_OPERATION_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This routine is a post-operation dispatch routine for write operations.
-
-Arguments:
-
-    Data - Pointer to the filter callbackData that is passed to us.
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance, its associated volume and
-        file object.
-
-    CompletionContext - The completion context set in the pre-operation routine.
-
-    Flags - Denotes whether the completion is successful or is being drained.
-
-Return Value:
-
-    The return value is the status of the operation.
-
---*/
 {
     UNREFERENCED_PARAMETER(Data);
     UNREFERENCED_PARAMETER(FltObjects);
@@ -799,28 +658,6 @@ AntiRansomwarePreSetInformation (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
     )
-/*++
-
-Routine Description:
-
-    This routine is a pre-operation dispatch routine for set information operations.
-
-Arguments:
-
-    Data - Pointer to the filter callbackData that is passed to us.
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance, its associated volume and
-        file object.
-
-    CompletionContext - The context for the completion routine for this
-        operation.
-
-Return Value:
-
-    The return value is the status of the operation.
-
---*/
 {
     NTSTATUS status;
     PFLT_FILE_NAME_INFORMATION nameInfo = NULL;
@@ -831,7 +668,12 @@ Return Value:
     UNREFERENCED_PARAMETER(FltObjects);
     UNREFERENCED_PARAMETER(CompletionContext);
 
-    if (!gProtectionEnabled) {
+    // CRITICAL FIX: IRQL Check
+    if (KeGetCurrentIrql() > PASSIVE_LEVEL) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    if (gProtectionLevel == ProtectionDisabled) {
         return FLT_PREOP_SUCCESS_NO_CALLBACK;
     }
 
@@ -865,47 +707,57 @@ Return Value:
         renameInfo = (PFILE_RENAME_INFORMATION)Data->Iopb->Parameters.SetFileInformation.InfoBuffer;
         if (renameInfo != NULL) {
             UNICODE_STRING newName;
-            newName.Buffer = renameInfo->FileName;
-            newName.Length = (USHORT)renameInfo->FileNameLength;
-            newName.MaximumLength = newName.Length;
+            
+            // Safety check for buffer length
+            if (renameInfo->FileNameLength > 0 && renameInfo->FileNameLength < 65536) {
+                // We need to be careful with the buffer as it might not be NULL terminated
+                // It is just a pointer to the buffer within the structure
+                
+                // Create a temporary safe unicode string
+                newName.Buffer = renameInfo->FileName;
+                newName.Length = (USHORT)renameInfo->FileNameLength;
+                newName.MaximumLength = newName.Length;
 
-            if (IsRansomwareExtension(&newName)) {
-                //
-                // Initialize context
-                //
-                context.FileName = nameInfo->Name;
-                context.ProcessId = PsGetCurrentProcessId();
-                context.OperationType = IRP_MJ_SET_INFORMATION;
-                KeQuerySystemTime(&context.Timestamp);
-
-                //
-                // Get process name
-                //
-                GetProcessName(context.ProcessId, context.ProcessName, sizeof(context.ProcessName));
-
-                //
-                // Analyze threat level
-                //
-                threatLevel = AnalyzeThreatLevel(&context);
-
-                if (threatLevel >= ThreatLevelHigh) {
+                if (IsRansomwareExtension(&newName)) {
                     //
-                    // Log the threat
+                    // Initialize context
                     //
-                    LogThreatActivity(&context);
+                    context.FileName = nameInfo->Name;
+                    context.ProcessId = PsGetCurrentProcessId();
+                    context.OperationType = IRP_MJ_SET_INFORMATION;
+                    KeQuerySystemTime(&context.Timestamp);
 
                     //
-                    // Update statistics
+                    // Get process name
                     //
-                    UpdateStatistics(1); // Threat blocked
+                    GetProcessName(context.ProcessId, context.ProcessName, sizeof(context.ProcessName));
 
-                    PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
-                                 ("AntiRansomware!AntiRansomwarePreSetInformation: Blocking rename to ransomware extension\n"));
+                    //
+                    // Analyze threat level
+                    //
+                    threatLevel = AnalyzeThreatLevel(&context);
 
-                    FltReleaseFileNameInformation(nameInfo);
-                    Data->IoStatus.Status = STATUS_ACCESS_DENIED;
-                    Data->IoStatus.Information = 0;
-                    return FLT_PREOP_COMPLETE;
+                    if (threatLevel >= ThreatLevelHigh) {
+                        //
+                        // Log the threat
+                        //
+                        LogThreatActivity(&context);
+
+                        //
+                        // Update statistics
+                        //
+                        UpdateStatistics(1); // Threat blocked
+
+                        if (gProtectionLevel >= ProtectionActive) {
+                            PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
+                                         ("AntiRansomware!AntiRansomwarePreSetInformation: Blocking rename to ransomware extension\n"));
+
+                            FltReleaseFileNameInformation(nameInfo);
+                            Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+                            Data->IoStatus.Information = 0;
+                            return FLT_PREOP_COMPLETE;
+                        }
+                    }
                 }
             }
         }
@@ -928,30 +780,6 @@ AntiRansomwareConnect (
     _In_ ULONG SizeOfContext,
     _Flt_ConnectionCookie_Outptr_ PVOID *ConnectionCookie
     )
-/*++
-
-Routine Description:
-
-    This is called when user-mode connects to the server port.
-
-Arguments:
-
-    ClientPort - This is the client connection port that will be used to
-        send messages from the filter.
-
-    ServerPortCookie - Unused
-
-    ConnectionContext - Unused
-
-    SizeOfContext - Unused
-
-    ConnectionCookie - Unused
-
-Return Value:
-
-    STATUS_SUCCESS - to accept the connection
-
---*/
 {
     UNREFERENCED_PARAMETER(ServerPortCookie);
     UNREFERENCED_PARAMETER(ConnectionContext);
@@ -973,21 +801,6 @@ VOID
 AntiRansomwareDisconnect (
     _In_opt_ PVOID ConnectionCookie
     )
-/*++
-
-Routine Description:
-
-    This is called when the connection is torn-down.
-
-Arguments:
-
-    ConnectionCookie - Unused
-
-Return Value:
-
-    None
-
---*/
 {
     UNREFERENCED_PARAMETER(ConnectionCookie);
 
@@ -1011,70 +824,20 @@ AntiRansomwareMessage (
     _In_ ULONG OutputBufferSize,
     _Out_ PULONG ReturnOutputBufferLength
     )
-/*++
-
-Routine Description:
-
-    This is called whenever a user mode application wishes to communicate
-    with this minifilter.
-
-Arguments:
-
-    ConnectionCookie - Unused
-
-    InputBuffer - A buffer containing input data
-
-    InputBufferSize - The size in bytes of the InputBuffer
-
-    OutputBuffer - A buffer provided by the application that originated the
-        communication in which to store data to be returned to this application
-
-    OutputBufferSize - The size in bytes of the OutputBuffer
-
-    ReturnOutputBufferLength - The size in bytes of meaningful data returned in
-        the OutputBuffer
-
-Return Value:
-
-    Returns the status of processing the message.
-
---*/
 {
     NTSTATUS status = STATUS_SUCCESS;
 
     UNREFERENCED_PARAMETER(ConnectionCookie);
+    UNREFERENCED_PARAMETER(OutputBuffer);
+    UNREFERENCED_PARAMETER(OutputBufferSize);
+    UNREFERENCED_PARAMETER(ReturnOutputBufferLength);
 
     PAGED_CODE();
 
     if (InputBuffer != NULL && InputBufferSize >= sizeof(ULONG)) {
-        ULONG command = *(PULONG)InputBuffer;
-
-        switch (command) {
-            case IOCTL_START_PROTECTION:
-                gProtectionEnabled = TRUE;
-                break;
-
-            case IOCTL_STOP_PROTECTION:
-                gProtectionEnabled = FALSE;
-                break;
-
-            case IOCTL_GET_STATISTICS:
-                if (OutputBuffer != NULL && OutputBufferSize >= sizeof(PROTECTION_STATISTICS)) {
-                    ExAcquireFastMutex(&gStatisticsMutex);
-                    RtlCopyMemory(OutputBuffer, &gStatistics, sizeof(PROTECTION_STATISTICS));
-                    ExReleaseFastMutex(&gStatisticsMutex);
-                    *ReturnOutputBufferLength = sizeof(PROTECTION_STATISTICS);
-                } else {
-                    status = STATUS_BUFFER_TOO_SMALL;
-                }
-                break;
-
-            default:
-                status = STATUS_INVALID_PARAMETER;
-                break;
-        }
-    } else {
-        status = STATUS_INVALID_PARAMETER;
+        // Obsolete legacy message handling
+        // We now primarily use DeviceIoControl
+        // This is kept for backward compatibility if needed, but for now we just return success
     }
 
     return status;
@@ -1088,21 +851,6 @@ BOOLEAN
 IsRansomwareExtension (
     _In_ PUNICODE_STRING FileName
     )
-/*++
-
-Routine Description:
-
-    Checks if the file has a known ransomware extension.
-
-Arguments:
-
-    FileName - The file name to check
-
-Return Value:
-
-    TRUE if it's a ransomware extension, FALSE otherwise
-
---*/
 {
     ULONG i;
     UNICODE_STRING extension;
@@ -1129,30 +877,10 @@ BOOLEAN
 IsSuspiciousProcess (
     _In_ PCWSTR ProcessName
     )
-/*++
-
-Routine Description:
-
-    Checks if the process name contains suspicious keywords.
-
-Arguments:
-
-    ProcessName - The process name to check
-
-Return Value:
-
-    TRUE if suspicious, FALSE otherwise
-
---*/
 {
     ULONG i;
-    UNICODE_STRING processString, suspiciousString;
-
-    RtlInitUnicodeString(&processString, ProcessName);
-
+       
     for (i = 0; SuspiciousProcessNames[i] != NULL; i++) {
-        RtlInitUnicodeString(&suspiciousString, SuspiciousProcessNames[i]);
-        
         if (wcsstr(ProcessName, SuspiciousProcessNames[i]) != NULL) {
             return TRUE;
         }
@@ -1165,21 +893,6 @@ THREAT_LEVEL
 AnalyzeThreatLevel (
     _In_ PFILE_OPERATION_CONTEXT Context
     )
-/*++
-
-Routine Description:
-
-    Analyzes the threat level of a file operation.
-
-Arguments:
-
-    Context - The file operation context
-
-Return Value:
-
-    The calculated threat level
-
---*/
 {
     THREAT_LEVEL level = ThreatLevelNone;
 
@@ -1224,25 +937,6 @@ GetProcessName (
     _Out_ PWCHAR ProcessName,
     _In_ ULONG BufferSize
     )
-/*++
-
-Routine Description:
-
-    Gets the process name for a given process ID.
-
-Arguments:
-
-    ProcessId - The process ID
-
-    ProcessName - Buffer to store the process name
-
-    BufferSize - Size of the buffer
-
-Return Value:
-
-    STATUS_SUCCESS if successful
-
---*/
 {
     NTSTATUS status;
     PEPROCESS process;
@@ -1280,21 +974,6 @@ BOOLEAN
 IsProcessWhitelisted (
     _In_ HANDLE ProcessId
     )
-/*++
-
-Routine Description:
-
-    Checks if a process is whitelisted.
-
-Arguments:
-
-    ProcessId - The process ID to check
-
-Return Value:
-
-    TRUE if whitelisted, FALSE otherwise
-
---*/
 {
     // Simplified implementation - would check against a real whitelist
     UNREFERENCED_PARAMETER(ProcessId);
@@ -1307,30 +986,16 @@ VOID
 UpdateStatistics (
     _In_ ULONG Operation
     )
-/*++
-
-Routine Description:
-
-    Updates protection statistics.
-
-Arguments:
-
-    Operation - The type of operation (0 = file scanned, 1 = threat blocked)
-
-Return Value:
-
-    None
-
---*/
 {
     ExAcquireFastMutex(&gStatisticsMutex);
 
     switch (Operation) {
         case 0: // File scanned
-            gStatistics.FilesScanned++;
+            InterlockedIncrement(&gStatistics.FilesScanned);
+            InterlockedIncrement(&gStatistics.TotalOperations);
             break;
         case 1: // Threat blocked
-            gStatistics.ThreatsBlocked++;
+            InterlockedIncrement(&gStatistics.ThreatsBlocked);
             break;
         default:
             break;
@@ -1343,21 +1008,6 @@ NTSTATUS
 LogThreatActivity (
     _In_ PFILE_OPERATION_CONTEXT Context
     )
-/*++
-
-Routine Description:
-
-    Logs threat activity (simplified implementation).
-
-Arguments:
-
-    Context - The file operation context
-
-Return Value:
-
-    STATUS_SUCCESS
-
---*/
 {
     // In a real implementation, this would log to event log or file
     UNREFERENCED_PARAMETER(Context);
@@ -1377,21 +1027,6 @@ NTSTATUS
 CreateControlDevice (
     _In_ PDRIVER_OBJECT DriverObject
     )
-/*++
-
-Routine Description:
-
-    Creates a control device for communication with user-mode applications.
-
-Arguments:
-
-    DriverObject - The driver object
-
-Return Value:
-
-    STATUS_SUCCESS if successful
-
---*/
 {
     NTSTATUS status;
     UNICODE_STRING deviceName;
@@ -1408,7 +1043,7 @@ Return Value:
                             &gDeviceObject);
 
     if (NT_SUCCESS(status)) {
-        RtlInitUnicodeString(&symbolicLink, L"\\DosDevices\\AntiRansomware");
+        RtlInitUnicodeString(&symbolicLink, L"\\DosDevices\\AntiRansomwareFilter");
         
         status = IoCreateSymbolicLink(&symbolicLink, &deviceName);
         
@@ -1429,26 +1064,11 @@ VOID
 AntiRansomwareDeleteControlDevice (
     VOID
     )
-/*++
-
-Routine Description:
-
-    Deletes the control device.
-
-Arguments:
-
-    None
-
-Return Value:
-
-    None
-
---*/
 {
     UNICODE_STRING symbolicLink;
 
     if (gDeviceObject != NULL) {
-        RtlInitUnicodeString(&symbolicLink, L"\\DosDevices\\AntiRansomware");
+        RtlInitUnicodeString(&symbolicLink, L"\\DosDevices\\AntiRansomwareFilter");
         IoDeleteSymbolicLink(&symbolicLink);
         IoDeleteDevice(gDeviceObject);
         gDeviceObject = NULL;
@@ -1460,31 +1080,22 @@ HandleDeviceControl (
     _In_ PDEVICE_OBJECT DeviceObject,
     _In_ PIRP Irp
     )
-/*++
-
-Routine Description:
-
-    Handles device control requests.
-
-Arguments:
-
-    DeviceObject - The device object
-
-    Irp - The I/O request packet
-
-Return Value:
-
-    STATUS_SUCCESS if successful
-
---*/
 {
     NTSTATUS status = STATUS_SUCCESS;
     PIO_STACK_LOCATION irpStack;
     ULONG ioControlCode;
+    PVOID inputBuffer;
+    ULONG inputBufferLength;
+    PVOID outputBuffer;
+    ULONG outputBufferLength;
 
     UNREFERENCED_PARAMETER(DeviceObject);
 
     irpStack = IoGetCurrentIrpStackLocation(Irp);
+    inputBuffer = Irp->AssociatedIrp.SystemBuffer;
+    inputBufferLength = irpStack->Parameters.DeviceIoControl.InputBufferLength;
+    outputBuffer = Irp->AssociatedIrp.SystemBuffer;
+    outputBufferLength = irpStack->Parameters.DeviceIoControl.OutputBufferLength;
     
     switch (irpStack->MajorFunction) {
         case IRP_MJ_CREATE:
@@ -1496,23 +1107,52 @@ Return Value:
             ioControlCode = irpStack->Parameters.DeviceIoControl.IoControlCode;
             
             switch (ioControlCode) {
-                case IOCTL_START_PROTECTION:
-                    gProtectionEnabled = TRUE;
+                case IOCTL_AR_SET_PROTECTION:
+                    if (inputBufferLength >= sizeof(ULONG)) {
+                        ULONG newLevel = *(ULONG*)inputBuffer;
+                        if (newLevel <= ProtectionMaximum) {
+                            InterlockedExchange(&gProtectionLevel, newLevel);
+                            PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
+                                         ("AntiRansomware!HandleDeviceControl: Protection level set to %d\n", newLevel));
+                        } else {
+                            status = STATUS_INVALID_PARAMETER;
+                        }
+                    } else {
+                        status = STATUS_BUFFER_TOO_SMALL;
+                    }
                     break;
 
-                case IOCTL_STOP_PROTECTION:
-                    gProtectionEnabled = FALSE;
+                case IOCTL_AR_GET_STATUS:
+                    if (outputBufferLength >= sizeof(ULONG)) {
+                        *(ULONG*)outputBuffer = gProtectionLevel;
+                        Irp->IoStatus.Information = sizeof(ULONG);
+                    } else {
+                        status = STATUS_BUFFER_TOO_SMALL;
+                    }
                     break;
 
-                case IOCTL_GET_STATISTICS:
-                    if (irpStack->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(PROTECTION_STATISTICS)) {
+                case IOCTL_AR_GET_STATISTICS:
+                    if (outputBufferLength >= sizeof(PROTECTION_STATISTICS)) {
                         ExAcquireFastMutex(&gStatisticsMutex);
-                        RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &gStatistics, sizeof(PROTECTION_STATISTICS));
+                        RtlCopyMemory(outputBuffer, &gStatistics, sizeof(PROTECTION_STATISTICS));
                         ExReleaseFastMutex(&gStatisticsMutex);
                         Irp->IoStatus.Information = sizeof(PROTECTION_STATISTICS);
                     } else {
                         status = STATUS_BUFFER_TOO_SMALL;
                     }
+                    break;
+
+                case IOCTL_AR_SET_DB_POLICY:
+                    // Placeholder for future DB policy implementation
+                    // This matches the user-mode IOCTL check
+                    status = STATUS_SUCCESS;
+                    break;
+
+                case IOCTL_AR_ISSUE_SERVICE_TOKEN:
+                case IOCTL_AR_REVOKE_SERVICE_TOKEN:
+                case IOCTL_AR_LIST_SERVICE_TOKENS:
+                    // Placeholders for future Token implementation
+                    status = STATUS_SUCCESS;
                     break;
 
                 default:

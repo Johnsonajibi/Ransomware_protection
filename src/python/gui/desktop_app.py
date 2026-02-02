@@ -1,6 +1,7 @@
 """
 Anti-Ransomware Desktop Application
 Modern GUI for ransomware protection management
+Author: Johnson Ajibi
 """
 
 import sys

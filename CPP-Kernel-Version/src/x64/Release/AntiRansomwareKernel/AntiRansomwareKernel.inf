@@ -3,7 +3,7 @@ Signature   = "$Windows NT$"
 Class       = "ActivityMonitor"
 ClassGuid   = {b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}
 Provider    = "AntiRansomware"
-DriverVer   = 10/29/2025,2.0.0.0
+DriverVer = 02/02/2026,6.53.35.670
 CatalogFile = AntiRansomwareKernel.cat
 PnpLockdown = 1
 

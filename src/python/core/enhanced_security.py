@@ -2,6 +2,7 @@
 """
 ENHANCED SECURITY MODULE
 ========================
+Author: Johnson Ajibi
 Advanced protection against sophisticated attack vectors identified
 in the attack simulation. This module addresses critical vulnerabilities.
 """

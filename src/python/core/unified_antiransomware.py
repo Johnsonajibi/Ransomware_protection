@@ -42,6 +42,28 @@ from enterprise_detection import load_enterprise_config
 from pathlib import Path
 from cryptography.fernet import Fernet
 
+# Enhanced Imports (Restored Modules)
+try:
+    from ml_detector import MLRansomwareDetector
+    HAS_ML = True
+except ImportError:
+    HAS_ML = False
+    print("⚠️ ML Detector module not found")
+
+try:
+    from monitoring.honeypot_monitor import HoneypotMonitor
+    HAS_HONEYPOT = True
+except ImportError:
+    HAS_HONEYPOT = False
+    print("⚠️ Honeypot Monitor module not found")
+
+try:
+    from threat_intelligence import ThreatIntelligence
+    HAS_TI = True
+except ImportError:
+    HAS_TI = False
+    print("⚠️ Threat Intelligence module not found")
+
 # Safe print wrapper to handle unicode in packaged apps
 _original_print = print
 def safe_print(*args, **kwargs):
@@ -3868,6 +3890,61 @@ class UnifiedProtectionManager:
                 self._apply_gate_to_protected()
         except Exception as e:
             print(f"⚠️ Token gate startup config failed: {e}")
+
+        # Initialize restored modules (ML & Honeypot)
+        if HAS_ML:
+            try:
+                model_path = os.path.join(os.getcwd(), "models", "ransomware_classifier.pkl")
+                self.ml_detector = MLRansomwareDetector(model_path)
+                print("✅ ML Ransomware Detector initialized")
+            except Exception as e:
+                 print(f"⚠️ ML Detector init failed: {e}")
+                 self.ml_detector = None
+        else:
+            self.ml_detector = None
+
+        if HAS_HONEYPOT:
+            try:
+                def honeypot_cb(event):
+                    # Log to database
+                    if hasattr(self, 'database'):
+                        self.database.log_event(
+                            event_type="HONEYPOT_TRIGGERED",
+                            file_path=event.get('honeypot_path', 'unknown'),
+                            details=str(event),
+                            severity="CRITICAL",
+                            action_taken="MONITORED"
+                        )
+                    print(f"🚨 HONEYPOT TRIGGERED: {event}")
+                
+                self.honeypot = HoneypotMonitor(callback=honeypot_cb)
+                user_profile = os.environ.get('USERPROFILE', 'C:\\Users\\Public')
+                targets = [
+                    os.path.join(user_profile, 'Documents'),
+                    os.path.join(user_profile, 'Desktop'),
+                    os.path.join(user_profile, 'Downloads')
+                ]
+                self.honeypot.create_honeypots(targets)
+                self.honeypot.start()
+                print("✅ Honeypot Monitor active")
+            except Exception as e:
+                print(f"⚠️ Honeypot startup failed: {e}")
+                self.honeypot = None
+            except Exception as e:
+                print(f"⚠️ Honeypot startup failed: {e}")
+                self.honeypot = None
+        else:
+            self.honeypot = None
+
+        if HAS_TI:
+            try:
+                self.threat_intel = ThreatIntelligence()
+                print("✅ Threat Intelligence initialized")
+            except Exception as e:
+                print(f"⚠️ Threat Intelligence init failed: {e}")
+                self.threat_intel = None
+        else:
+            self.threat_intel = None
 
     def _apply_gate_to_protected(self):
         """Apply token-gate ACLs to all registered protected folders."""
