@@ -73,29 +73,39 @@ def validate_path(path: str, base_dir: str = None) -> bool:
     if not path or not isinstance(path, str):
         return False
     try:
-        # Pre-check simple traversal bytes
-        if '..' in path or '\0' in path:
+        # Reject obvious traversal and null-byte injection
+        if '\0' in path:
             return False
-            
-        p = Path(path).resolve()
-        normalized = str(p)
-        
-        # Drive letter check for Windows
+
+        # Normalize the path syntactically without resolving against the filesystem
+        normalized = os.path.normpath(path)
+
+        # Reject any remaining parent-directory segments after normalization
+        # On Windows, both '/' and '\\' may be used as separators
+        parts = normalized.replace('\\', '/').split('/')
+        if any(part == '..' for part in parts):
+            return False
+
+        # Drive letter / UNC checks for Windows
         if os.name == 'nt':
+            # Reject UNC paths (\\server\share)
+            if normalized.startswith('\\\\'):
+                return False
+            # Reject malformed drive specifications
             if len(normalized) >= 2 and normalized[1] == ':' and not normalized[0].isalpha():
                 return False
-            if normalized.startswith('\\\\'): # Deny UNC paths to be safe
-                return False
-                
+
+        # If a base directory is provided, ensure the normalized path stays within it
         if base_dir:
-            base_p = Path(base_dir).resolve()
-            # Cryptographically secure check using commonpath logic
+            base_norm = os.path.normpath(base_dir)
             try:
-                common = os.path.commonpath([str(base_p), normalized])
-                if common != str(base_p):
+                common = os.path.commonpath([base_norm, normalized])
+                if common != base_norm:
                     return False
             except ValueError:
-                return False # Different drives
+                # Different drives or invalid paths
+                return False
+
         return True
     except Exception:
         return False
