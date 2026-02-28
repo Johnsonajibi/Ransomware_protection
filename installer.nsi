@@ -230,8 +230,8 @@ Section "Kernel Driver (Optional)" SEC03
             Goto endDriverSection
     
     skipDriver:
-        DetailPrint "Kernel driver not found, skipping..."
-        MessageBox MB_ICONINFORMATION "Kernel driver binary not found. The system will use Python-based file protection."
+        DetailPrint "Kernel driver not found or test-signing skipped..."
+        MessageBox MB_ICONEXCLAMATION "Advanced Kernel Protection could not be initialized.$\n$\nThe system will now operate in Standard Protection Mode using robust user-mode monitoring algorithms.$\n$\nNote: While Standard Mode provides excellent real-time behavioral analysis and file monitoring, it may not intercept certain advanced threat vectors that operate at the deepest system levels. Full system protection is active, but Advanced Kernel Protection is recommended for optimal security."
     
     endDriverSection:
 SectionEnd

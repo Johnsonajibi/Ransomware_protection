@@ -732,27 +732,44 @@ def select_folder():
     return render_template_string(FOLDER_SELECTOR_TEMPLATE)
 
 def is_safe_path(path):
-    """Check if the path is safe from traversal attacks"""
-    if not path:
+    """
+    Check if the path is safe from traversal attacks (CodeQL Fix).
+    Ensures the path does not contain traversal characters and resolves 
+    to a valid location without arbitrary path injection.
+    """
+    if not path or not isinstance(path, str):
         return False
     try:
-        # Normalize and check for traversal
-        abs_path = os.path.abspath(path)
-        if '..' in path or not abs_path:
+        # Reject obvious traversal sequences before normalization
+        if '..' in path or '\0' in path:
             return False
             
-        # Basic sanity check: reject system critical directories
+        # Normalize and construct absolute path
+        abs_path = os.path.abspath(path)
+        if not abs_path:
+            return False
+            
+        # Ensure the path still points to a valid drive/root on Windows
+        if os.name == 'nt':
+            if not os.path.splitdrive(abs_path)[0]:
+                return False
+                
+        # Reject system critical directories for writing/protecting
         forbidden = [
-            'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
-            'C:\\Users\\All Users', 'C:\\System Volume Information'
+            os.path.abspath('C:\\Windows'),
+            os.path.abspath('C:\\Program Files'),
+            os.path.abspath('C:\\Program Files (x86)'),
+            os.path.abspath('C:\\Users\\All Users'),
+            os.path.abspath('C:\\System Volume Information')
         ]
+        
         abs_path_lower = abs_path.lower()
         for f in forbidden:
             if abs_path_lower.startswith(f.lower()):
                 return False
                 
         return True
-    except:
+    except Exception:
         return False
 
 @app.route('/api/add-folder', methods=['POST'])

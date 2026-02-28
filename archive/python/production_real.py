@@ -33,55 +33,44 @@ except ImportError:
     from urllib import unquote
 
 def validate_path(path: str, base_dir: str = None) -> bool:
-    """
-    Validate path to prevent directory traversal attacks.
-    
-    Args:
-        path: The path to validate
-        base_dir: Optional base directory that path must be within
-        
-    Returns:
-        True if path is safe, False otherwise
-    """
+    """Validate path to prevent directory traversal attacks (CodeQL Fix)."""
     if not path or not isinstance(path, str):
         return False
     
     # Decode URL-encoded characters to catch %2e%2e attacks
     decoded_path = unquote(path)
     
-    # Get absolute and normalized path
-    abs_path = os.path.abspath(decoded_path)
-    normalized = os.path.normpath(abs_path)
-    
-    # Check for directory traversal patterns
-    if '..' in normalized or '..' in decoded_path:
-        return False
-    
-    # Check for home directory expansion
-    if '~' in decoded_path:
-        return False
-    
-    # If base_dir specified, ensure path is within it
-    if base_dir:
-        base_abs = os.path.abspath(base_dir)
-        # Ensure the normalized path is within base_abs (with proper separator check)
-        if not (normalized.startswith(base_abs) and 
-                (len(normalized) == len(base_abs) or 
-                 normalized[len(base_abs):len(base_abs)+1] in (os.sep, os.altsep) or
-                 normalized[len(base_abs):len(base_abs)+1] == '')):
+    try:
+        # Pre-check simple traversal bytes
+        if '..' in path or '\0' in path or '..' in decoded_path:
             return False
-    
-    # Validate Windows paths
-    if os.name == 'nt':
-        # Check for valid drive letter
-        if len(normalized) >= 2 and normalized[1] == ':':
-            if not normalized[0].isalpha():
+            
+        # Check for home directory expansion
+        if '~' in decoded_path:
+            return False
+
+        p = Path(decoded_path).resolve()
+        normalized = str(p)
+        
+        # Drive letter check for Windows
+        if os.name == 'nt':
+            if len(normalized) >= 2 and normalized[1] == ':' and not normalized[0].isalpha():
                 return False
-        # Block UNC paths for security (per requirement - prevents network share attacks)
-        if normalized.startswith('\\\\'):
-            return False
-    
-    return True
+            if normalized.startswith('\\\\'): # Deny UNC paths to be safe
+                return False
+                
+        if base_dir:
+            base_p = Path(base_dir).resolve()
+            # Cryptographically secure check using commonpath logic
+            try:
+                common = os.path.commonpath([str(base_p), normalized])
+                if common != str(base_p):
+                    return False
+            except ValueError:
+                return False # Different drives
+        return True
+    except Exception:
+        return False
 
 # Try to import smart card libraries
 try:

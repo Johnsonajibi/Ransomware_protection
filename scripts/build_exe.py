@@ -45,7 +45,9 @@ class ExeBuilder:
             
             # PyInstaller command
             cmd = [
-                'pyinstaller',
+                sys.executable,
+                '-m',
+                'PyInstaller',
                 '--onefile',
                 '--windowed',
                 '--name', script_name,

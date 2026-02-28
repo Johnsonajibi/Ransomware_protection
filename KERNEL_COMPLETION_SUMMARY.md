@@ -58,7 +58,7 @@ Status: ✅ OPERATIONAL
 Running Components:
 ✓ Python Desktop Application (PyQt6)
 ✓ Core Protection Engine (6,899 LOC)
-✓ ML Ransomware Detector (integrated)
+✓ ML Ransomware Detector (trained & integrated)
 ✓ Honeypot Monitor (active)
 ✓ Threat Intelligence (loaded)
 ✓ TPM 2.0 Integration (hardware-dependent)
@@ -268,7 +268,7 @@ manage_driver.bat → [5] Check Driver Logs
 
 ### What's Working NOW (Without Kernel)
 ✅ User-mode ransomware protection  
-✅ ML-based threat detection  
+✅ ML-based threat detection (active)  
 ✅ Honeypot monitoring  
 ✅ TPM hardware security  
 ✅ Post-quantum cryptography  

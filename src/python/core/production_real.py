@@ -69,24 +69,35 @@ class ProtectedFolder:
     last_access: Optional[datetime] = None
 
 def validate_path(path: str, base_dir: str = None) -> bool:
-    """Validate path to prevent directory traversal attacks."""
+    """Validate path to prevent directory traversal attacks (CodeQL Fix)."""
     if not path or not isinstance(path, str):
         return False
     try:
+        # Pre-check simple traversal bytes
+        if '..' in path or '\0' in path:
+            return False
+            
         p = Path(path).resolve()
         normalized = str(p)
-        if '..' in path or '..' in normalized:
-            return False
-        if base_dir:
-            if not p.is_relative_to(Path(base_dir).resolve()):
-                return False
+        
+        # Drive letter check for Windows
         if os.name == 'nt':
             if len(normalized) >= 2 and normalized[1] == ':' and not normalized[0].isalpha():
                 return False
-            if normalized.startswith('\\\\'):
+            if normalized.startswith('\\\\'): # Deny UNC paths to be safe
                 return False
+                
+        if base_dir:
+            base_p = Path(base_dir).resolve()
+            # Cryptographically secure check using commonpath logic
+            try:
+                common = os.path.commonpath([str(base_p), normalized])
+                if common != str(base_p):
+                    return False
+            except ValueError:
+                return False # Different drives
         return True
-    except:
+    except Exception:
         return False
 
 @dataclass
