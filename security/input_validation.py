@@ -42,7 +42,7 @@ class InputValidator:
         
         try:
             # Resolve to absolute path
-            resolved_path = Path(path).resolve()
+            resolved_path = os.path.abspath(path)
             
             # Check for directory traversal attempts
             # If the input was relative and resolved to something that doesn't share a root

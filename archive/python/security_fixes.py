@@ -197,7 +197,7 @@ class SafeFileProtection:
     def protect_path_safely(self, path):
         """Protect path with safe ACL modifications"""
         try:
-            path_obj = Path(path).resolve()
+            path_obj = os.path.abspath(path)
             
             # Block system directories
             system_dirs = [

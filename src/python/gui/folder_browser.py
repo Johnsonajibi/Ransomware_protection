@@ -168,7 +168,7 @@ class RealFolderBrowser:
             
             try:
                 # Validate and resolve the path to prevent directory traversal
-                resolved_path = Path(path).resolve()
+                resolved_path = os.path.abspath(path)
                 # Verify the path is within acceptable directories
                 if '..' in Path(path).parts:
                     raise ValueError("Directory traversal attempt detected")

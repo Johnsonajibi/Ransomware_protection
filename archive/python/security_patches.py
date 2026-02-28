@@ -175,7 +175,7 @@ class SecurePathManager:
         """Safely normalize and validate paths"""
         try:
             # Convert to Path object and resolve
-            path = Path(path_input).resolve()
+            path = os.path.abspath(path_input)
             
             # Block system directories
             blocked_paths = [

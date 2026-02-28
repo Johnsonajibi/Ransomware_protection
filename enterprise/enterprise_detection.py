@@ -357,7 +357,7 @@ def deploy_canaries(locations: List[str], check_interval: int = 5) -> List[Canar
         if not location:
             continue
         resolved = os.path.expandvars(location)
-        resolved = str(Path(resolved).resolve())
+        resolved = str(os.path.abspath(resolved))
         if resolved in seen:
             continue
         seen.add(resolved)

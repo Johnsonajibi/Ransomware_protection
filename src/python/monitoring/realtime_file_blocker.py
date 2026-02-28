@@ -80,7 +80,7 @@ class RealtimeFileBlocker:
         
     def add_protected_path(self, path):
         """Add path to real-time protection"""
-        path_str = str(Path(path).resolve())
+        path_str = str(os.path.abspath(path))
         self.protected_paths.add(path_str)
         
         # Register all files in path

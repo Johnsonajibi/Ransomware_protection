@@ -40,7 +40,7 @@ class CodeQLFixer:
                                     lines.insert(j+1, '        # Validate path to prevent traversal')
                                     lines.insert(j+2, '        from pathlib import Path')
                                     lines.insert(j+3, '        try:')
-                                    lines.insert(j+4, '            resolved = Path(path).resolve()')
+                                    lines.insert(j+4, '            resolved = os.path.abspath(path)')
                                     lines.insert(j+5, '            if not str(resolved).startswith(str(allowed_base)):')
                                     lines.insert(j+6, '                raise ValueError("Path traversal detected")')
                                     lines.insert(j+7, '        except (ValueError, OSError) as e:')
