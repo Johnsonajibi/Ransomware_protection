@@ -121,3 +121,7 @@ hybrid_pqc_keys_*.json
 tmp/
 temp/
 *.tmp
+
+# Archival files
+archive/
+_archived/
