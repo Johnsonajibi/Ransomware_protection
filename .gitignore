@@ -125,3 +125,9 @@ temp/
 # Archival files
 archive/
 _archived/
+
+# Local build artifacts and config
+*.checksums.txt
+*.sha512.txt
+build_config
+config.json
