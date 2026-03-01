@@ -2,10 +2,10 @@
 # Essential requirements for truly production-ready system
 
 # Essential Python packages
-flask==3.0.0
+flask>=3.0.3
 watchdog==3.0.0
 psutil==5.9.6
-cryptography==44.0.1
+cryptography>=44.0.2
 pywin32==306
 wmi==1.5.1
 
