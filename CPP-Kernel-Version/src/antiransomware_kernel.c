@@ -159,7 +159,7 @@ NTSTATUS LogThreatActivity(_In_ PFILE_OPERATION_CONTEXT Context);
 
 // Device control functions
 NTSTATUS CreateControlDevice(_In_ PDRIVER_OBJECT DriverObject);
-VOID AntiRansomwareDeleteControlDevice(VOID);
+VOID AntiRansomwareDeleteControlDevice(void);
 NTSTATUS HandleDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp);
 
 //
@@ -1062,7 +1062,7 @@ CreateControlDevice (
 
 VOID
 AntiRansomwareDeleteControlDevice (
-    VOID
+    void
     )
 {
     UNICODE_STRING symbolicLink;
