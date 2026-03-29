@@ -517,13 +517,22 @@ class EmailAlertingSystem:
                     if hasattr(e, 'recipients') and e.recipients else 0
                 )
 
+                err_lower = err_str.lower()
                 is_spam_challenge = (
                     challenge is not None or
-                    smtp_code in (450, 451, 554) or
+                    smtp_code in (450, 451) or          # greylisting codes
+                    (smtp_code == 554 and (             # 554 only if spam-keyword present
+                        '4.7.1' in err_str or '5.7.1' in err_str or
+                        'greylisting' in err_lower or
+                        'unsolicited' in err_lower or
+                        'localdomain' in err_lower or
+                        'resend' in err_lower or
+                        'spam' in err_lower
+                    )) or
                     '4.7.1' in err_str or '5.7.1' in err_str or
-                    'greylisting' in err_str.lower() or
-                    'unsolicited' in err_str.lower() or
-                    'localdomain' in err_str.lower()
+                    'greylisting' in err_lower or
+                    'unsolicited' in err_lower or
+                    'localdomain' in err_lower
                 )
 
                 if is_spam_challenge:
@@ -534,7 +543,8 @@ class EmailAlertingSystem:
 
                     tag = challenge or 'NOTSPAMTAG'
                     _console_print(f"   Spam challenge detected (code={smtp_code}) — "
-                                   f"retrying with tag '{tag}'...")
+                                   f"server said: {err_str[:200]!r}")
+                    _console_print(f"   Retrying with tag '{tag}'...")
                     import time as _time
                     _time.sleep(2)
 
