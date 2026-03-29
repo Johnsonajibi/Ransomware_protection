@@ -441,16 +441,18 @@ class EmailAlertingSystem:
             # Connect to SMTP server
             _console_print(f"   Connecting to {smtp_server}:{smtp_port}...")
 
-            # Use the sender's domain as the EHLO name.
-            # Corporate mail servers reject EHLO from unknown hostnames
-            # ("LOCALDOMAIN" rejection). Sending EHLO <domain> where domain
-            # matches the from_email domain (e.g. jtnetsolutions.com from
-            # user@jtnetsolutions.com) satisfies relay-protection rules.
-            from_email = self.config.get('from_email', '')
-            if '@' in from_email:
-                ehlo_name = from_email.split('@', 1)[1]
-            else:
-                ehlo_name = smtp_server
+            # RFC 5321 §4.1.3: clients without a matching PTR record must use
+            # address-literal format "[IP]" so the server can't reject it as
+            # "Forged HELO" or "LOCALDOMAIN".  We probe which local interface
+            # would be used to reach the SMTP server, then wrap it in brackets.
+            import socket as _sock
+            try:
+                _probe = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+                _probe.connect((smtp_server, smtp_port))
+                ehlo_name = f'[{_probe.getsockname()[0]}]'
+                _probe.close()
+            except Exception:
+                ehlo_name = f'[127.0.0.1]'
 
             # Port 465 uses implicit SSL (SMTP_SSL); all others use STARTTLS or plain
             if smtp_port == 465:
