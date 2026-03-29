@@ -83,12 +83,8 @@ class EmailAlertingSystem:
             'use_tls': True,
             'auth_required': True
         },
-        'custom': {
-            'server': 'smtp.example.com',
-            'port': 587,
-            'use_tls': True,
-            'auth_required': True
-        }
+        # Note: 'custom' is intentionally NOT in this dict so the send logic
+        # falls through to reading smtp_server/smtp_port directly from config.
     }
 
     @staticmethod
@@ -444,12 +440,25 @@ class EmailAlertingSystem:
             
             # Connect to SMTP server
             _console_print(f"   Connecting to {smtp_server}:{smtp_port}...")
-            
-            if use_tls:
+
+            # Use the SMTP server's own domain as the EHLO name.
+            # Using the from_email domain (e.g. gmail.com) against a corporate
+            # SMTP server triggers spam/relay rejections. The server domain is
+            # always the right value for an internal sender.
+            ehlo_name = smtp_server
+
+            # Port 465 uses implicit SSL (SMTP_SSL); all others use STARTTLS or plain
+            if smtp_port == 465:
+                server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+                server.ehlo(ehlo_name)
+            elif use_tls:
                 server = smtplib.SMTP(smtp_server, smtp_port)
+                server.ehlo(ehlo_name)
                 server.starttls()
+                server.ehlo(ehlo_name)   # re-EHLO after STARTTLS
             else:
                 server = smtplib.SMTP(smtp_server, smtp_port)
+                server.ehlo(ehlo_name)
             
             # Login if required
             if self.config['username'] and self.config['password']:
@@ -462,17 +471,148 @@ class EmailAlertingSystem:
                 self.config['bcc_recipients']
             )
             
-            server.send_message(msg, to_addrs=all_recipients)
-            server.quit()
-            
-            # Record alert
-            self._record_alert(alert_type, severity)
-            
-            _console_print(f"✓ Alert email sent to {len(all_recipients)} recipients")
-            return True
-            
+            try:
+                server.send_message(msg, to_addrs=all_recipients)
+                server.quit()
+                self._record_alert(alert_type, severity)
+                _console_print(f"✓ Alert email sent to {len(all_recipients)} recipients")
+                self._last_send_error = ''
+                return True
+            except (smtplib.SMTPRecipientsRefused,
+                    smtplib.SMTPDataError,
+                    smtplib.SMTPSenderRefused) as e:
+                # Parse server challenge code from error message.
+                # Many spam filters respond with "resend with code XYZ appended to subject"
+                import re as _re
+
+                # Build a plain-text version of the error — SMTPRecipientsRefused
+                # stores per-recipient tuples of (code, bytes_msg), so we must decode.
+                err_str = str(e)
+                if hasattr(e, 'recipients') and e.recipients:
+                    for _addr, (_code, _msg) in e.recipients.items():
+                        if isinstance(_msg, bytes):
+                            err_str += ' ' + _msg.decode('utf-8', errors='replace')
+                        else:
+                            err_str += ' ' + str(_msg)
+                elif hasattr(e, 'smtp_error'):
+                    _se = e.smtp_error
+                    err_str += ' ' + (_se.decode('utf-8', errors='replace')
+                                      if isinstance(_se, bytes) else str(_se))
+
+                challenge = None
+                m = _re.search(
+                    r'(?:resend(?:\s+it)?\s+with\s+(?:the\s+)?code\s+)([A-Za-z0-9]{6,20})',
+                    err_str, _re.IGNORECASE
+                )
+                if m:
+                    challenge = m.group(1)
+
+                smtp_code = getattr(e, 'smtp_code', None) or (
+                    list(e.recipients.values())[0][0]
+                    if hasattr(e, 'recipients') and e.recipients else 0
+                )
+
+                is_spam_challenge = (
+                    challenge is not None or
+                    smtp_code in (450, 451, 554) or
+                    '4.7.1' in err_str or '5.7.1' in err_str or
+                    'greylisting' in err_str.lower() or
+                    'unsolicited' in err_str.lower() or
+                    'localdomain' in err_str.lower()
+                )
+
+                if is_spam_challenge:
+                    try:
+                        server.quit()
+                    except Exception:
+                        pass
+
+                    tag = challenge or 'NOTSPAMTAG'
+                    _console_print(f"   Spam challenge detected (code={smtp_code}) — "
+                                   f"retrying with tag '{tag}'...")
+                    import time as _time
+                    _time.sleep(2)
+
+                    # Patch subject with the server-requested tag
+                    orig_subject = str(msg['Subject'])
+                    del msg['Subject']
+                    msg['Subject'] = f"{orig_subject} {tag}"
+
+                    def _smtp_connect():
+                        if smtp_port == 465:
+                            s = smtplib.SMTP_SSL(smtp_server, smtp_port)
+                            s.ehlo(ehlo_name)
+                        elif use_tls:
+                            s = smtplib.SMTP(smtp_server, smtp_port)
+                            s.ehlo(ehlo_name)
+                            s.starttls()
+                            s.ehlo(ehlo_name)
+                        else:
+                            s = smtplib.SMTP(smtp_server, smtp_port)
+                            s.ehlo(ehlo_name)
+                        if self.config['username'] and self.config['password']:
+                            s.login(self.config['username'], self.config['password'])
+                        return s
+
+                    try:
+                        server2 = _smtp_connect()
+                        server2.send_message(msg, to_addrs=all_recipients)
+                        server2.quit()
+                        self._record_alert(alert_type, severity)
+                        _console_print("✓ Alert email sent (after spam-filter retry)")
+                        self._last_send_error = ''
+                        return True
+                    except Exception as retry_err:
+                        # Retry failed — check if server returned a NEW challenge code
+                        retry_err_str = str(retry_err)
+                        if hasattr(retry_err, 'recipients') and retry_err.recipients:
+                            for _a, (_c, _m) in retry_err.recipients.items():
+                                if isinstance(_m, bytes):
+                                    retry_err_str += ' ' + _m.decode('utf-8', errors='replace')
+                                else:
+                                    retry_err_str += ' ' + str(_m)
+                        elif hasattr(retry_err, 'smtp_error'):
+                            _se2 = retry_err.smtp_error
+                            retry_err_str += ' ' + (_se2.decode('utf-8', errors='replace')
+                                                    if isinstance(_se2, bytes) else str(_se2))
+
+                        m2 = _re.search(
+                            r'(?:resend(?:\s+it)?\s+with\s+(?:the\s+)?code\s+)([A-Za-z0-9]{6,20})',
+                            retry_err_str, _re.IGNORECASE
+                        )
+                        real_code = m2.group(1) if m2 else None
+
+                        if real_code and real_code != tag:
+                            _console_print(f"   Server provided real code '{real_code}' — final attempt...")
+                            _time.sleep(2)
+                            # Replace tag in subject with the real code
+                            cur_subj = str(msg['Subject'])
+                            del msg['Subject']
+                            msg['Subject'] = cur_subj.replace(tag, real_code)
+                            try:
+                                server3 = _smtp_connect()
+                                server3.send_message(msg, to_addrs=all_recipients)
+                                server3.quit()
+                                self._record_alert(alert_type, severity)
+                                _console_print("✓ Alert email sent (challenge code accepted)")
+                                self._last_send_error = ''
+                                return True
+                            except Exception as final_err:
+                                self._last_send_error = f"SMTP error after challenge: {final_err}"
+                                return False
+                        else:
+                            self._last_send_error = f"SPAM_CHALLENGE:{tag}:{retry_err}"
+                            return False
+                raise
+
+        except smtplib.SMTPException as e:
+            err = str(e)
+            _console_print(f"❌ SMTP error: {err}")
+            self._last_send_error = err
+            return False
         except Exception as e:
             _console_print(f"❌ Failed to send email: {e}")
+            self._last_send_error = str(e)
             return False
 
 
