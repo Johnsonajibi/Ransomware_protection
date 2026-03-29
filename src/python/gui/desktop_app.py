@@ -3265,21 +3265,32 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Success",
                                         f"Test email sent successfully!\n\nCheck your inbox at:\n{recipients}")
             elif smtp_err and 'SPAM_CHALLENGE' in smtp_err:
-                # Extract the tag that was tried
                 parts = smtp_err.split(':', 2)
                 tag = parts[1] if len(parts) > 1 else ''
-                QMessageBox.information(self, "Config OK — Server Spam Filter",
-                                        "Your SMTP credentials and server are correct.\n\n"
-                                        "The mail server is running a spam-filter challenge:\n"
-                                        f"  Code tried: {tag}\n\n"
-                                        "This happens because the Anti-Ransomware app is a\n"
-                                        "new sender on your mail server. Options:\n\n"
-                                        "1. Whitelist the sender in your mail server's spam\n"
-                                        "   filter (recommended for a security tool).\n\n"
-                                        "2. Wait 5–15 minutes and try again — most spam\n"
-                                        "   filters auto-approve after a retry delay.\n\n"
-                                        "Your configuration is saved and will work once the\n"
-                                        "server whitelist is updated.")
+                detail = parts[2][:120] if len(parts) > 2 else ''
+                is_grey = 'greylisting' in detail.lower() or 'greylisting' in smtp_err.lower()
+                if is_grey:
+                    QMessageBox.information(self, "Config OK — Server Greylisting",
+                                            "Your credentials and server settings are correct.\n\n"
+                                            "The mail server is temporarily delaying the email\n"
+                                            "(greylisting) — this is normal for new senders.\n\n"
+                                            "The email will be delivered automatically within\n"
+                                            "5–15 minutes without any action needed.\n\n"
+                                            "Real security alerts will also be queued and\n"
+                                            "delivered once the server whitelists this sender.\n\n"
+                                            "To get immediate delivery, ask your mail admin\n"
+                                            "to whitelist the sender address in the spam filter.")
+                else:
+                    QMessageBox.information(self, "Config OK — Server Spam Filter",
+                                            "Your SMTP credentials and server are correct.\n\n"
+                                            "The mail server is running a spam-filter challenge:\n"
+                                            f"  Code tried: {tag}\n\n"
+                                            "1. Whitelist the sender in your mail server's spam\n"
+                                            "   filter (recommended for a security tool).\n\n"
+                                            "2. Wait 5–15 minutes and try again — most spam\n"
+                                            "   filters auto-approve after a retry delay.\n\n"
+                                            "Your configuration is saved and will work once the\n"
+                                            "server whitelist is updated.")
             else:
                 detail = f"\n\nSMTP error:\n  {smtp_err}" if smtp_err else ""
                 QMessageBox.warning(self, "Failed",

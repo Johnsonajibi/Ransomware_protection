@@ -520,20 +520,18 @@ class EmailAlertingSystem:
                 )
 
                 err_lower = err_str.lower()
+                is_greylisting = smtp_code in (450, 451) and 'greylisting' in err_lower
                 is_spam_challenge = (
+                    is_greylisting or
                     challenge is not None or
-                    smtp_code in (450, 451) or          # greylisting codes
-                    (smtp_code == 554 and (             # 554 only if spam-keyword present
+                    (smtp_code == 554 and (
                         '4.7.1' in err_str or '5.7.1' in err_str or
-                        'greylisting' in err_lower or
-                        'unsolicited' in err_lower or
-                        'localdomain' in err_lower or
-                        'resend' in err_lower or
+                        'greylisting' in err_lower or 'unsolicited' in err_lower or
+                        'localdomain' in err_lower or 'resend' in err_lower or
                         'spam' in err_lower
                     )) or
                     '4.7.1' in err_str or '5.7.1' in err_str or
-                    'greylisting' in err_lower or
-                    'unsolicited' in err_lower or
+                    'greylisting' in err_lower or 'unsolicited' in err_lower or
                     'localdomain' in err_lower
                 )
 
@@ -545,10 +543,10 @@ class EmailAlertingSystem:
 
                     tag = challenge or 'NOTSPAMTAG'
                     _console_print(f"   Spam challenge detected (code={smtp_code}) — "
-                                   f"server said: {err_str[:200]!r}")
+                                   f"server said: {err_str[:300]!r}")
                     _console_print(f"   Retrying with tag '{tag}'...")
                     import time as _time
-                    _time.sleep(2)
+                    _time.sleep(3)
 
                     # Patch subject with the server-requested tag
                     orig_subject = str(msg['Subject'])
@@ -580,29 +578,34 @@ class EmailAlertingSystem:
                         self._last_send_error = ''
                         return True
                     except Exception as retry_err:
-                        # Retry failed — check if server returned a NEW challenge code
+                        # Greylisting requires a time delay — successive immediate
+                        # retries won't help. Report as SPAM_CHALLENGE so the GUI
+                        # shows "Config OK" (credentials correct, server queued it).
+                        if is_greylisting:
+                            self._last_send_error = f"SPAM_CHALLENGE:{tag}:{retry_err}"
+                            return False
+
+                        # For non-greylisting challenges, check if server gave a new code
                         retry_err_str = str(retry_err)
                         if hasattr(retry_err, 'recipients') and retry_err.recipients:
                             for _a, (_c, _m) in retry_err.recipients.items():
-                                if isinstance(_m, bytes):
-                                    retry_err_str += ' ' + _m.decode('utf-8', errors='replace')
-                                else:
-                                    retry_err_str += ' ' + str(_m)
+                                retry_err_str += ' ' + (
+                                    _m.decode('utf-8', errors='replace')
+                                    if isinstance(_m, bytes) else str(_m))
                         elif hasattr(retry_err, 'smtp_error'):
                             _se2 = retry_err.smtp_error
-                            retry_err_str += ' ' + (_se2.decode('utf-8', errors='replace')
-                                                    if isinstance(_se2, bytes) else str(_se2))
+                            retry_err_str += ' ' + (
+                                _se2.decode('utf-8', errors='replace')
+                                if isinstance(_se2, bytes) else str(_se2))
 
                         m2 = _re.search(
                             r'(?:resend(?:\s+it)?\s+with\s+(?:the\s+)?code\s+)([A-Za-z0-9]{6,20})',
-                            retry_err_str, _re.IGNORECASE
-                        )
+                            retry_err_str, _re.IGNORECASE)
                         real_code = m2.group(1) if m2 else None
 
                         if real_code and real_code != tag:
-                            _console_print(f"   Server provided real code '{real_code}' — final attempt...")
-                            _time.sleep(2)
-                            # Replace tag in subject with the real code
+                            _console_print(f"   Server gave code '{real_code}' — final attempt...")
+                            _time.sleep(3)
                             cur_subj = str(msg['Subject'])
                             del msg['Subject']
                             msg['Subject'] = cur_subj.replace(tag, real_code)
@@ -615,7 +618,7 @@ class EmailAlertingSystem:
                                 self._last_send_error = ''
                                 return True
                             except Exception as final_err:
-                                self._last_send_error = f"SMTP error after challenge: {final_err}"
+                                self._last_send_error = f"SPAM_CHALLENGE:{real_code}:{final_err}"
                                 return False
                         else:
                             self._last_send_error = f"SPAM_CHALLENGE:{tag}:{retry_err}"
