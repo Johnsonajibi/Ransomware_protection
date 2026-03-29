@@ -83,6 +83,12 @@ class HealthMonitor:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='protection_status'"
+            )
+            if cursor.fetchone()[0] == 0:
+                conn.close()
+                return {'status': 'warning', 'message': 'protection_status table not initialized', 'components': {}}
             cursor.execute('SELECT component, enabled FROM protection_status')
             enabled_map = {row[0]: bool(row[1]) for row in cursor.fetchall()}
             conn.close()
@@ -96,9 +102,15 @@ class HealthMonitor:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='security_events'"
+            )
+            if cursor.fetchone()[0] == 0:
+                conn.close()
+                return {'status': 'warning', 'message': 'security_events table not initialized'}
             cursor.execute('''
                 SELECT COUNT(*) FROM security_events 
-                WHERE created_at > datetime('now', '-' || ? || ' minutes')
+                WHERE timestamp > datetime('now', '-' || ? || ' minutes')
             ''', (minutes,))
             count = cursor.fetchone()[0] or 0
             conn.close()
@@ -108,13 +120,24 @@ class HealthMonitor:
             return { 'status': 'error', 'message': str(e) }
 
     def full_check(self) -> Dict:
+        system_resources = self.check_system_resources()
+        database = self.check_database()
+        protection_components = self.check_protection_components()
+        event_rate = self.check_event_rate()
+        statuses = [
+            system_resources.get('status', 'unknown'),
+            database.get('status', 'unknown'),
+            protection_components.get('status', 'unknown'),
+            event_rate.get('status', 'healthy'),
+        ]
+        overall = 'healthy' if all(status in ('healthy', 'warning') for status in statuses) else 'error'
         return {
             'timestamp': datetime.now().isoformat(),
-            'system_resources': self.check_system_resources(),
-            'database': self.check_database(),
-            'protection_components': self.check_protection_components(),
-            'event_rate': self.check_event_rate(),
-            'overall': 'healthy'
+            'system_resources': system_resources,
+            'database': database,
+            'protection_components': protection_components,
+            'event_rate': event_rate,
+            'overall': overall
         }
 
     def save_check(self, name: str, result: Dict):

@@ -117,11 +117,41 @@ class PolicyEngine:
             return { 'status': 'error', 'message': str(e) }
 
     def _evaluate_test(self, rules: Dict, test_case: Dict) -> bool:
-        # Basic mock evaluation
-        if test_case.get('should_block') and rules.get('block_mode'):
-            return True
-        if test_case.get('should_allow') and rules.get('allow_unknown'):
-            return True
+        operation = str(test_case.get('operation', '')).lower()
+        path = str(test_case.get('path', '')).lower()
+        process_name = str(test_case.get('process_name', '')).lower()
+        threat_score = float(test_case.get('threat_score', 0) or 0)
+
+        blocked_ops = {str(item).lower() for item in rules.get('blocked_operations', [])}
+        allowed_ops = {str(item).lower() for item in rules.get('allowed_operations', [])}
+        blocked_processes = {str(item).lower() for item in rules.get('blocked_processes', [])}
+        allowed_processes = {str(item).lower() for item in rules.get('allowed_processes', [])}
+        protected_paths = [str(item).lower() for item in rules.get('protected_paths', [])]
+        min_threat_score = float(rules.get('min_threat_score', 0) or 0)
+
+        if blocked_processes and process_name in blocked_processes:
+            return bool(test_case.get('should_block', True))
+
+        if blocked_ops and operation in blocked_ops:
+            return bool(test_case.get('should_block', True))
+
+        if protected_paths and path:
+            if any(path.startswith(prefix) for prefix in protected_paths):
+                if rules.get('block_mode') and operation in {'write', 'delete', 'rename'}:
+                    return bool(test_case.get('should_block', True))
+
+        if min_threat_score and threat_score >= min_threat_score:
+            return bool(test_case.get('should_block', True))
+
+        if allowed_processes and process_name and process_name not in allowed_processes:
+            return not bool(test_case.get('should_allow', False))
+
+        if allowed_ops:
+            return operation in allowed_ops if operation else bool(test_case.get('expected', False))
+
+        if rules.get('allow_unknown'):
+            return bool(test_case.get('should_allow', True))
+
         return bool(test_case.get('expected', False))
 
     def get_test_results(self, policy_name: str = None) -> List[Dict]:

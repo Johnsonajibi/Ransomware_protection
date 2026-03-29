@@ -1,3 +1,7 @@
-"""API interfaces and endpoints"""
+"""API interfaces and endpoints."""
 
-__all__ = []
+from .backup import BackupManager
+from .email import EmailAlerting
+from .siem import SIEMClient, SIEMConfig
+
+__all__ = ["BackupManager", "EmailAlerting", "SIEMClient", "SIEMConfig"]

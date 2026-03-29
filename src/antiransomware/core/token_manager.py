@@ -7,6 +7,7 @@ Manage TPM + USB + Device Fingerprint authentication.
 import os
 import sys
 import json
+import hashlib
 import logging
 import argparse
 import sqlite3
@@ -67,13 +68,68 @@ class TrifactorAuthManager:
 
     def _get_tpm_pcr_value(self) -> str:
         """Get TPM PCR value"""
-        # Stub: In production, would call TPM 2.0 APIs
-        return 'pcr_value_stub_123456789'
+        candidates = []
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\DeviceGuard",
+            ) as key:
+                candidates.append(str(winreg.QueryValueEx(key, "EnableVirtualizationBasedSecurity")[0]))
+        except Exception:
+            pass
+
+        try:
+            import wmi  # type: ignore
+
+            conn = wmi.WMI(namespace=r"root\CIMV2\Security\MicrosoftTpm")
+            for tpm in conn.Win32_Tpm():
+                if getattr(tpm, "SpecVersion", None):
+                    candidates.append(str(tpm.SpecVersion))
+                if getattr(tpm, "ManufacturerVersion", None):
+                    candidates.append(str(tpm.ManufacturerVersion))
+                break
+        except Exception:
+            pass
+
+        if not candidates:
+            candidates.append(self._get_device_fingerprint())
+
+        return hashlib.sha256("|".join(candidates).encode("utf-8")).hexdigest()
 
     def _get_device_fingerprint(self) -> str:
         """Get device fingerprint (hardware ID)"""
-        # Stub: In production, would combine CPU ID, motherboard, etc.
-        return 'fingerprint_stub_abcdef123456'
+        parts = [
+            os.environ.get("COMPUTERNAME", ""),
+            os.environ.get("PROCESSOR_IDENTIFIER", ""),
+            os.environ.get("USERNAME", ""),
+        ]
+        try:
+            import platform
+
+            parts.extend(
+                [
+                    platform.node(),
+                    platform.machine(),
+                    platform.processor(),
+                ]
+            )
+        except Exception:
+            pass
+
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"
+            ) as key:
+                parts.append(str(winreg.QueryValueEx(key, "MachineGuid")[0]))
+        except Exception:
+            pass
+
+        normalized = "|".join(part for part in parts if part)
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     def _get_usb_signature(self, usb_id: str) -> str:
         """Get USB device signature"""
@@ -154,3 +210,6 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
+
+TokenManager = TrifactorAuthManager

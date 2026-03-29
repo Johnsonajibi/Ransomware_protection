@@ -14,6 +14,8 @@ import sqlite3
 from pathlib import Path
 from typing import Dict
 
+from antiransomware.core.engine import ProtectionEngine
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 class KillSwitch:
     def __init__(self, protection_db: str = 'protection_db.sqlite'):
         self.db_path = Path(protection_db)
+        self.engine = ProtectionEngine(str(self.db_path))
         self._init_db()
 
     def _init_db(self):
@@ -65,6 +68,12 @@ class KillSwitch:
             cursor.execute('INSERT INTO emergency_state (active, reason) VALUES (1, ?)', (reason,))
             conn.commit()
             conn.close()
+            self.engine.log_event(
+                'emergency_kill_switch',
+                severity='critical',
+                action='activate',
+                details={'reason': reason},
+            )
             logger.info('Emergency state activated in DB')
             return True
         except Exception as e:

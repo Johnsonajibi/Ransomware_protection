@@ -11,6 +11,7 @@ import logging
 import argparse
 import sqlite3
 import platform
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List
@@ -109,12 +110,60 @@ class TokenDebugger:
             return 0
 
     def check_tpm_status(self) -> Dict:
-        """Basic TPM check stubs (OS-level)."""
-        return {
+        """Check TPM status using Windows TPM tooling when available."""
+        result = {
             'platform': platform.system(),
-            'tpm_present': platform.system() == 'Windows',
-            'detail': 'Stubbed: TPM presence not validated here'
+            'tpm_present': False,
+            'tpm_ready': False,
+            'detail': 'TPM not detected',
         }
+        if platform.system() != 'Windows':
+            result['detail'] = 'TPM probing only implemented for Windows'
+            return result
+
+        try:
+            ps = subprocess.run(
+                [
+                    'powershell',
+                    '-NoProfile',
+                    '-Command',
+                    'Get-Tpm | Select-Object TpmPresent,TpmReady,ManagedAuthLevel,ManufacturerIdTxt | ConvertTo-Json -Compress'
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if ps.returncode == 0 and ps.stdout.strip():
+                payload = json.loads(ps.stdout.strip())
+                result.update(
+                    {
+                        'tpm_present': bool(payload.get('TpmPresent')),
+                        'tpm_ready': bool(payload.get('TpmReady')),
+                        'managed_auth_level': payload.get('ManagedAuthLevel'),
+                        'manufacturer': payload.get('ManufacturerIdTxt'),
+                    }
+                )
+                result['detail'] = 'TPM status retrieved from Get-Tpm'
+                return result
+        except Exception as exc:
+            result['detail'] = f'Get-Tpm probe failed: {exc}'
+
+        try:
+            wmic = subprocess.run(
+                ['wmic', '/namespace:\\\\root\\cimv2\\security\\microsofttpm', 'path', 'win32_tpm', 'get', 'IsEnabled_InitialValue,IsActivated_InitialValue', '/value'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            text = (wmic.stdout or '').lower()
+            if wmic.returncode == 0 and ('isenabled_initialvalue' in text or 'isactivated_initialvalue' in text):
+                result['tpm_present'] = True
+                result['tpm_ready'] = 'true' in text
+                result['detail'] = 'TPM status retrieved from WMI'
+        except Exception:
+            pass
+
+        return result
 
 
 def main():

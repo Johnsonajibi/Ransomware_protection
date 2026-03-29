@@ -272,7 +272,7 @@ class TokenVerifier:
     def __init__(self):
         self.ed25519_public_key: Optional[Ed25519PublicKey] = None
         self.dilithium_public_key: Optional[bytes] = None
-        self.nonce_cache: set = set()  # Simple nonce tracking (should use proper storage)
+        self.nonce_cache: dict[str, float] = {}
     
     def load_ed25519_public_key(self, public_key: Union[bytes, str]):
         """Load Ed25519 public key"""
@@ -309,7 +309,7 @@ class TokenVerifier:
             nonce_hex = token.payload.nonce.hex()
             if nonce_hex in self.nonce_cache:
                 return False  # Replay attack
-            self.nonce_cache.add(nonce_hex)
+            self.nonce_cache[nonce_hex] = time.time()
             
             # Verify signatures
             payload_data = token.payload.serialize()
@@ -341,11 +341,11 @@ class TokenVerifier:
             return False
     
     def cleanup_nonce_cache(self, max_age: int = 3600):
-        """Clean up old nonces (should be implemented with proper timestamp tracking)"""
-        # This is a simplified implementation
-        # In production, use proper timestamp-based cleanup
-        if len(self.nonce_cache) > 10000:
-            self.nonce_cache.clear()
+        """Clean up old nonces using timestamp-based expiry."""
+        cutoff = time.time() - max_age
+        self.nonce_cache = {
+            nonce: seen_at for nonce, seen_at in self.nonce_cache.items() if seen_at >= cutoff
+        }
 
 # Utility functions
 def create_token(file_id: str, pid: int, user_sid: str, allowed_ops: TokenOps,

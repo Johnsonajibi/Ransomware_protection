@@ -69,7 +69,7 @@ class SystemHealthChecker:
         
         # Whitelist our own processes
         self.whitelist_patterns = [
-            'antiransomware', 'trifactor', 'token_gated'
+            'antiransomware', 'anti-ransom', 'trifactor', 'token_gated'
         ]
         
         # Thresholds
@@ -196,7 +196,7 @@ class SystemHealthChecker:
                         if pattern in proc_name or pattern in proc_exe:
                             # Verify if it's just a Python script we trust
                             cmdline = proc.info.get('cmdline', [])
-                            if cmdline and any('desktop_app.py' in arg for arg in cmdline):
+                            if cmdline and any('desktop_app.py' in arg or 'launch_admin.py' in arg for arg in cmdline):
                                 continue
                                 
                             self.threat_indicators.append(

@@ -10,6 +10,7 @@ import time
 import json
 import hashlib
 import threading
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Set, Optional
@@ -191,7 +192,7 @@ class FileProtectionHandler(FileSystemEventHandler):
     def _process_file_event(self, file_path: str, event_type: str):
         """Process file system event and check for threats"""
         try:
-            # Get current process info (simplified - in real system would use kernel drivers)
+            # Best-effort process attribution for the current event.
             process_info = self._get_process_info()
             
             # Analyze for threats
@@ -230,22 +231,46 @@ class FileProtectionHandler(FileSystemEventHandler):
             return {'pid': 0, 'name': 'unknown'}
     
     def _block_operation(self, threat: ThreatEvent):
-        """Block malicious file operation (simplified implementation)"""
+        """Block malicious file operation with real containment steps."""
         try:
-            # System response:
-            # 1. Terminate the malicious process
-            # 2. Restore files from backup
-            # 3. Alert administrators
-            # 4. Quarantine the process
-            
             print(f"🛡️  BLOCKING MALICIOUS OPERATION")
             print(f"   Process: {threat.process_name} (PID: {threat.process_id})")
             print(f"   File: {threat.file_path}")
             print(f"   Action: File access denied")
-            
-            # Log the unauthorized access attempt
-            # Block operation at kernel level
-            
+
+            quarantine_dir = Path("./quarantine")
+            quarantine_dir.mkdir(exist_ok=True)
+
+            file_path = Path(threat.file_path)
+            if file_path.exists() and file_path.is_file():
+                quarantine_target = quarantine_dir / f"{int(time.time())}_{file_path.name}"
+                try:
+                    shutil.move(str(file_path), str(quarantine_target))
+                    print(f"   Quarantined file: {quarantine_target}")
+                except Exception as move_exc:
+                    print(f"   Quarantine move failed: {move_exc}")
+
+            try:
+                import psutil
+
+                if threat.process_id and threat.process_id != os.getpid():
+                    proc = psutil.Process(threat.process_id)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                    print(f"   Process terminated: {threat.process_name} ({threat.process_id})")
+            except Exception as proc_exc:
+                print(f"   Process containment failed: {proc_exc}")
+
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "threat": threat.to_dict(),
+                "action_taken": "quarantine_and_terminate",
+            }
+            with open(quarantine_dir / "blocked_events.jsonl", "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(log_entry) + "\n")
         except Exception as e:
             print(f"Error blocking operation: {e}")
     

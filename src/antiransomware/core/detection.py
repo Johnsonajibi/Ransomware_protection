@@ -9,10 +9,32 @@ import sys
 import json
 import logging
 import argparse
+from pathlib import Path
 from typing import Dict, List
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def load_enterprise_config(config_path: str = "config.json") -> Dict:
+    """Load enterprise-detection configuration with safe defaults."""
+    path = Path(config_path)
+    if not path.exists():
+        return {
+            "enterprise_detection": {
+                "enabled": False,
+                "suspicious_processes": [],
+                "encrypted_extensions": [],
+            }
+        }
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if "enterprise_detection" not in data:
+            data["enterprise_detection"] = {"enabled": False}
+        return data
+    except Exception:
+        return {"enterprise_detection": {"enabled": False}}
 
 class EnterpriseDetectionAdvanced:
     def __init__(self):

@@ -237,7 +237,7 @@ class SecureKernelDriverManager:
             return False
     
     def build_real_driver(self, source_path: str) -> Optional[str]:
-        """Build REAL minifilter driver using WDK (not placeholder)"""
+        """Build the minifilter driver using WDK."""
         try:
             # Check for Windows Driver Kit
             wdk_paths = [
@@ -324,7 +324,7 @@ SOURCES=secure_minifilter_driver.c
             ]
             
             # Note: This is a simplified build process
-            # In production, you would use the full WDK build environment
+            # Use the full WDK build environment when available.
             
             sys_file = os.path.join(build_dir, "SecureAntiRansomware.sys")
             

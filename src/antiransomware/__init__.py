@@ -1,16 +1,9 @@
-"""
-Anti-Ransomware Protection Platform
-====================================
-Enterprise-grade ransomware protection with hardware-gated token enforcement,
-kernel-level monitoring, and behavioral threat detection.
-"""
+"""Installable Anti-Ransomware package."""
 
 __version__ = '1.0.0'
 __author__ = 'Anti-Ransomware Project'
 
-from .core import *
-from .api import *
-from .cli import *
+from .core import AuditLogger, PolicyEngine, ProtectionEngine, TokenManager
 
 __all__ = [
     'ProtectionEngine',

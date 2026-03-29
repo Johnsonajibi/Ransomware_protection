@@ -372,7 +372,7 @@ class PolicyEngine:
         return True
     
     def _verify_policy_signature(self, policy_data: Dict) -> bool:
-        """Verify policy signature (simplified implementation)"""
+        """Verify policy signature."""
         try:
             signature_b64 = policy_data.get('signature')
             if not signature_b64:

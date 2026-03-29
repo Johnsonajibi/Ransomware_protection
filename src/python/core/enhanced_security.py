@@ -18,6 +18,7 @@ import threading
 import time
 import ctypes
 import winreg
+import psutil
 from pathlib import Path
 from datetime import datetime
 from cryptography.hazmat.primitives import hashes
@@ -258,6 +259,7 @@ class BehavioralProcessMonitor:
         self.monitoring = False
         self.baseline_behavior = {}
         self.suspicious_patterns = []
+        self.file_activity_baseline = {}
         
     def start_behavioral_monitoring(self):
         """Start behavioral process monitoring"""
@@ -362,11 +364,35 @@ class BehavioralProcessMonitor:
                 
     def _monitor_file_access_patterns(self):
         """Monitor for rapid file access patterns (ransomware behavior)"""
+        monitored_dirs = [
+            Path.home() / "Documents",
+            Path.home() / "Desktop",
+            Path.home() / "Pictures",
+        ]
         while self.monitoring:
             try:
-                # Monitor file system events using Windows Event Log
-                # This is a simplified version - production would use ETW
-                time.sleep(30)  # Reduced frequency for this example
+                now = time.time()
+                recent_writes = 0
+                for directory in monitored_dirs:
+                    if not directory.exists():
+                        continue
+                    for file_path in directory.rglob("*"):
+                        if not file_path.is_file():
+                            continue
+                        try:
+                            stat = file_path.stat()
+                        except OSError:
+                            continue
+                        previous = self.file_activity_baseline.get(str(file_path), 0.0)
+                        self.file_activity_baseline[str(file_path)] = stat.st_mtime
+                        if stat.st_mtime > previous and now - stat.st_mtime < 30:
+                            recent_writes += 1
+                if recent_writes > 40:
+                    self._handle_suspicious_behavior(
+                        "Rapid File Modification Pattern",
+                        f"{recent_writes} file updates observed across protected user folders in 30s",
+                    )
+                time.sleep(30)
                 
             except Exception as e:
                 if self.monitoring:

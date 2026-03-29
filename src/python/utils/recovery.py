@@ -7,7 +7,6 @@ import os
 import shutil
 import logging
 import subprocess
-import shlex
 import tempfile
 from datetime import datetime
 from typing import List, Optional, Dict, Tuple
@@ -103,6 +102,8 @@ class RecoveryManager:
                         current_snapshot = {'id': line.split(':')[1].strip()}
                     elif 'Creation Time:' in line:
                         current_snapshot['creation_time'] = line.split(':', 1)[1].strip()
+                    elif 'Shadow Copy Volume:' in line:
+                        current_snapshot['shadow_copy_volume'] = line.split(':', 1)[1].strip()
                 
                 if current_snapshot:
                     snapshots.append(current_snapshot)
@@ -128,27 +129,39 @@ class RecoveryManager:
             True if successful
         """
         try:
-            # VSS snapshots are mounted under \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy<N>\
-            # This is simplified - production code would use COM APIs
-            logger.warning("VSS restore requires administrative privileges")
-            
             if restore_path is None:
                 restore_path = file_path
-            
-            # Log the restore attempt
+
+            snapshots = self.list_vss_snapshots(file_path[:2])
+            snapshot = next((item for item in snapshots if item.get('id') == snapshot_id), None)
+            if not snapshot:
+                logger.error(f"Snapshot not found: {snapshot_id}")
+                return False
+
+            shadow_volume = snapshot.get('shadow_copy_volume')
+            if not shadow_volume:
+                logger.error(f"Snapshot {snapshot_id} has no mounted shadow volume path")
+                return False
+
+            drive_prefix = os.path.splitdrive(file_path)[0]
+            relative_path = file_path[len(drive_prefix):].lstrip("\\/")
+            source_path = os.path.join(shadow_volume, relative_path)
+            if not os.path.exists(source_path):
+                logger.error(f"File not present in snapshot: {source_path}")
+                return False
+
+            os.makedirs(os.path.dirname(restore_path), exist_ok=True)
+            shutil.copy2(source_path, restore_path)
+
             self.recovery_log.append({
                 'timestamp': datetime.now().isoformat(),
                 'snapshot_id': snapshot_id,
                 'file_path': file_path,
                 'restore_path': restore_path,
-                'success': False
+                'success': True
             })
-            
-            logger.info(f"VSS restore would copy from snapshot {snapshot_id}")
-            logger.info(f"  Source: {file_path}")
-            logger.info(f"  Dest: {restore_path}")
-            
-            # Actual implementation would use VSS COM API
+
+            logger.info(f"Restored {file_path} from snapshot {snapshot_id} to {restore_path}")
             return True
             
         except Exception as e:

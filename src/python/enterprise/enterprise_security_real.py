@@ -8,6 +8,8 @@ import os
 import json
 import time
 import hashlib
+import base64
+from json import JSONDecodeError
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +46,17 @@ class EnterpriseSecurityManager:
     def __init__(self):
         if not ENTERPRISE_AVAILABLE:
             raise RuntimeError("Enterprise security libraries not available")
+
+        self.app_dir = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'AntiRansomware'
+        self.keys_dir = self.app_dir / 'keys'
+        try:
+            os.makedirs(self.keys_dir, exist_ok=True)
+        except (PermissionError, OSError):
+            # Fallback for Windows Store Python sandboxing
+            self.app_dir = Path.home() / '.antiransomware'
+            self.keys_dir = self.app_dir / 'keys'
+            os.makedirs(self.keys_dir, exist_ok=True)
+        self.keypair_path = self.keys_dir / 'enterprise_pqc_keypair.json'
         
         # Initialize post-quantum crypto
         self.pqc = PostQuantumCrypto()
@@ -54,39 +67,114 @@ class EnterpriseSecurityManager:
         enable_post_quantum_crypto()  # Enable quantum-resistant hashing
         self.fingerprinter = AdvancedDeviceFingerprinter()
         
-        # Generate device fingerprint (includes CPU, BIOS, TPM, network)
-        fp_result = self._generate_device_fingerprint()
-        # Extract string from FingerprintResult if needed
-        if isinstance(fp_result, str):
-            self.device_fingerprint = fp_result
-        elif hasattr(fp_result, 'fingerprint'):
-            self.device_fingerprint = fp_result.fingerprint
-        else:
-            self.device_fingerprint = str(fp_result)
+        # Load or generate a stable device fingerprint
+        self.device_fingerprint = self._load_or_create_fingerprint()
         
-        # Generate post-quantum keypairs (Kyber1024 KEM + Dilithium3 signature)
-        print("🔐 Generating post-quantum keypairs...")
-        self.kem_public_key, self.kem_secret_key = self.pqc.generate_kem_keypair()
-        self.sig_public_key, self.sig_secret_key = self.pqc.generate_sig_keypair()
+        # Load a stable post-quantum keypair so issued tokens remain valid across restarts.
+        self.kem_public_key, self.kem_secret_key, self.sig_public_key, self.sig_secret_key = self._load_or_create_keypair()
+        
+        # Track current token data after successful validation
+        self.current_token_data = None
         
         print(f"✅ Enterprise security initialized")
         print(f"   - KEM: Kyber1024 (quantum-resistant key exchange)")
         print(f"   - Signature: Dilithium3 (quantum-resistant signatures)")
-        print(f"   - Device fingerprint: {self.device_fingerprint[:32]}...")
+        print(f"   - Device fingerprint: {str(self.device_fingerprint)[:32]}...")
+
+    def _load_or_create_keypair(self):
+        """Load the persisted PQC keypair or create it on first run."""
+        try:
+            if self.keypair_path.exists():
+                with open(self.keypair_path, 'r', encoding='utf-8') as f:
+                    stored = json.load(f)
+                sig_sk = base64.b64decode(stored['sig_secret_key'])
+                kem_pk = base64.b64decode(stored['kem_public_key'])
+                # ML-DSA-65 secret key must be 4032 bytes; ML-KEM-1024 public key must be 1568 bytes
+                if len(sig_sk) != 4032 or len(kem_pk) != 1568:
+                    print(f"⚠️ Stored keypair has wrong key lengths (sig_sk={len(sig_sk)}, kem_pk={len(kem_pk)}), regenerating...")
+                    self.keypair_path.unlink(missing_ok=True)
+                    raise ValueError("stale keypair")
+                return (
+                    kem_pk,
+                    base64.b64decode(stored['kem_secret_key']),
+                    base64.b64decode(stored['sig_public_key']),
+                    sig_sk,
+                )
+        except Exception as e:
+            print(f"⚠️ Could not load persisted enterprise keypair: {e}")
+
+        print("🔐 Generating post-quantum keypairs...")
+        kem_secret_key, kem_public_key = self.pqc.generate_kem_keypair()  # returns (secret, public)
+        sig_secret_key, sig_public_key = self.pqc.generate_sig_keypair()
+
+        try:
+            with open(self.keypair_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'kem_public_key': base64.b64encode(kem_public_key).decode('ascii'),
+                    'kem_secret_key': base64.b64encode(kem_secret_key).decode('ascii'),
+                    'sig_public_key': base64.b64encode(sig_public_key).decode('ascii'),
+                    'sig_secret_key': base64.b64encode(sig_secret_key).decode('ascii'),
+                    'created_at': datetime.now().isoformat(),
+                }, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Could not persist enterprise keypair: {e}")
+
+        return kem_public_key, kem_secret_key, sig_public_key, sig_secret_key
     
+    def _load_or_create_fingerprint(self):
+        """Load persisted device fingerprint or generate and save one.
+        
+        The fingerprint MUST be stable across restarts so that tokens
+        created in one session can be validated in any later session.
+        """
+        fp_path = self.keys_dir / 'device_fingerprint.json'
+        try:
+            if fp_path.exists():
+                with open(fp_path, 'r', encoding='utf-8') as f:
+                    stored = json.load(f)
+                fp = stored.get('device_fingerprint')
+                if fp and isinstance(fp, str) and len(fp) > 16:
+                    return fp
+        except Exception as e:
+            print(f"⚠️ Could not load persisted device fingerprint: {e}")
+
+        # Generate a new fingerprint
+        fp = str(self._generate_device_fingerprint())
+
+        # Persist it
+        try:
+            with open(fp_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'device_fingerprint': fp,
+                    'created_at': datetime.now().isoformat(),
+                }, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Could not persist device fingerprint: {e}")
+
+        return fp
+
     def _generate_device_fingerprint(self):
         """Generate comprehensive device fingerprint using quantum-resistant method"""
         try:
-            # Use quantum-resistant fingerprinting method
+            # generate_fingerprint() returns a plain hex string
             result = generate_fingerprint(method=FingerprintMethod.QUANTUM_RESISTANT)
-            if result and hasattr(result, 'fingerprint'):
-                return result.fingerprint
-            else:
-                # Fallback fingerprint
-                return self.fingerprinter.generate()
+            if result and isinstance(result, str) and len(result) > 16:
+                return result
+        except Exception as e:
+            print(f"⚠️ generate_fingerprint failed: {e}")
+
+        try:
+            # Fallback: AdvancedDeviceFingerprinter returns FingerprintResult
+            result = self.fingerprinter.generate()
+            if hasattr(result, 'fingerprint'):
+                return str(result.fingerprint)
+            return str(result)
         except Exception as e:
             print(f"⚠️ Advanced fingerprinting failed: {e}")
-            return self.fingerprinter.generate()
+            # Last resort: deterministic hash from machine identity
+            import platform
+            fallback = f"{platform.node()}-{platform.machine()}-{os.environ.get('USERNAME', 'user')}"
+            return hashlib.sha256(fallback.encode()).hexdigest()
     
     def create_quantum_usb_token(self, usb_path: str, permissions: list = None) -> str:
         """
@@ -129,6 +217,9 @@ class EnterpriseSecurityManager:
             token_bytes = token_json.encode('utf-8')
             
             # Sign token with post-quantum signature (Dilithium3)
+            # Ensure secret key has correct length; regenerate if stale
+            if len(self.sig_secret_key) != 4032:
+                self.sig_secret_key, self.sig_public_key = self.pqc.generate_sig_keypair()
             signature = self.pqc.sign(token_bytes, self.sig_secret_key)
             
             # Create signed token
@@ -181,6 +272,28 @@ class EnterpriseSecurityManager:
             traceback.print_exc()
             return None
     
+    def create_token_on_any_usb(self, permissions: list = None) -> str:
+        """
+        Create a quantum-resistant token on the first available USB drive
+        Used for initial setup/bootstrap
+        
+        Returns:
+            Path to created token file, or None if no USB Found
+        """
+        # Check common USB drive letters
+        for drive_letter in ['E:', 'F:', 'G:', 'H:', 'I:', 'J:', 'K:']:
+            if os.path.exists(drive_letter):
+                try:
+                    token_path = self.create_quantum_usb_token(drive_letter, permissions)
+                    if token_path:
+                        print(f"✅ Token created on USB drive {drive_letter}")
+                        return token_path
+                except Exception as e:
+                    continue
+        
+        print("❌ No available USB drive found")
+        return None
+    
     def validate_quantum_token(self, token_path: str) -> bool:
         """
         Validate quantum-resistant USB token with device binding verification
@@ -192,9 +305,27 @@ class EnterpriseSecurityManager:
             True if token is valid and device matches
         """
         try:
+            # First, validate file existence and basic validity
+            if not token_path or not isinstance(token_path, str):
+                return False
+            
+            if not os.path.exists(token_path):
+                # File doesn't exist - silently return False
+                return False
+            
+            # Check file size (token should be at least 100 bytes)
+            file_size = os.path.getsize(token_path)
+            if file_size < 100:
+                # File too small or empty - silently return False
+                return False
+            
             # Read encrypted token
             with open(token_path, 'rb') as f:
                 encrypted_data = f.read()
+            
+            # Check if file content is empty
+            if not encrypted_data or len(encrypted_data) == 0:
+                return False
             
             # Parse encrypted token as JSON (pqcdualusb expects dict)
             encrypted_token = json.loads(encrypted_data.decode('utf-8'))
@@ -226,26 +357,25 @@ class EnterpriseSecurityManager:
             
             print("✅ Quantum signature verified")
             
-            # Verify device binding
-            token_id = token_data["token_id"]
+            # Verify device fingerprint matches (stable, persisted fingerprint)
             stored_fingerprint = token_data["device_fingerprint"]
-            
-            is_bound = verify_device_binding(
-                token_id=token_id,
-                current_fingerprint=self.device_fingerprint
-            )
-            
-            if not is_bound:
-                print("❌ Device binding verification failed")
-                print(f"   Token was created for different hardware")
-                return False
-            
-            # Verify fingerprint matches
             if stored_fingerprint != self.device_fingerprint:
                 print("❌ Device fingerprint mismatch")
-                print(f"   Expected: {stored_fingerprint[:32]}...")
-                print(f"   Current:  {self.device_fingerprint[:32]}...")
+                print(f"   Token FP:   {stored_fingerprint[:32]}...")
+                print(f"   Current FP: {self.device_fingerprint[:32]}...")
                 return False
+            
+            # Optional: cross-check with device-fingerprinting library binding
+            token_id = token_data["token_id"]
+            try:
+                is_bound = verify_device_binding(
+                    token_id=token_id,
+                    current_fingerprint=self.device_fingerprint
+                )
+                if not is_bound:
+                    print("⚠️ Device binding library check failed (non-fatal, fingerprint match passed)")
+            except Exception:
+                pass  # Library check is supplementary, fingerprint match is authoritative
             
             print("✅ Device binding verified")
             print("✅ Token validation complete")
@@ -255,10 +385,22 @@ class EnterpriseSecurityManager:
             
             return True
             
+        except (JSONDecodeError, UnicodeDecodeError) as e:
+            # Not enterprise format (likely legacy Fernet token) - silently reject
+            return False
+        except ValueError as e:
+            msg = str(e)
+            if 'passphrase' in msg.lower():
+                # pqcdualusb requires a passphrase for this token type;
+                # auto-validation cannot supply one - return False silently.
+                return False
+            print(f"❌ Token validation failed for {os.path.basename(token_path)}: {e}")
+            return False
+        except (KeyError, TypeError) as e:
+            print(f"❌ Token validation failed for {os.path.basename(token_path)}: {e}")
+            return False
         except Exception as e:
-            print(f"❌ Token validation error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Unexpected token validation error for {os.path.basename(token_path)}: {e}")
             return False
     
     def encrypt_file_quantum(self, file_path: str, passphrase: str = None) -> bool:
@@ -290,9 +432,14 @@ class EnterpriseSecurityManager:
                 self.kem_public_key
             )
             
-            # Write encrypted file
+            # Write encrypted file (serialize dict to JSON bytes)
+            import json as _json
+            encrypted_bytes = _json.dumps({
+                k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
+                for k, v in encrypted_package.items()
+            }).encode('utf-8')
             with open(file_path, 'wb') as f:
-                f.write(encrypted_data)
+                f.write(encrypted_bytes)
             
             print(f"🔐 Quantum-encrypted: {os.path.basename(file_path)}")
             return True

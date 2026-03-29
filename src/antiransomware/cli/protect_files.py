@@ -13,6 +13,8 @@ import sqlite3
 from pathlib import Path
 from typing import List, Dict, Optional
 
+from antiransomware.core.engine import ProtectionEngine
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +33,7 @@ class ProtectedPathManager:
     def __init__(self, db_path: str = "protection_db.sqlite", config_path: str = "config.yaml"):
         self.db_path = Path(db_path)
         self.config_path = Path(config_path)
+        self.engine = ProtectionEngine(str(self.db_path))
         self.init_database()
         self.load_protected_paths()
     
@@ -82,21 +85,8 @@ class ProtectedPathManager:
                           description: str = None) -> bool:
         """Add a path to protection"""
         try:
-            # Validate path
             path = str(Path(path).absolute())
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO protected_paths 
-                (path, protection_level, enabled, description)
-                VALUES (?, ?, 1, ?)
-            ''', (path, protection_level, description))
-            
-            conn.commit()
-            conn.close()
-            
+            self.engine.protect_path(path, protection_level, description)
             logger.info(f"Added protected path: {path} (level: {protection_level})")
             return True
         except sqlite3.IntegrityError:
@@ -110,20 +100,9 @@ class ProtectedPathManager:
         """Remove a path from protection"""
         try:
             path = str(Path(path).absolute())
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('DELETE FROM protected_paths WHERE path = ?', (path,))
-            
-            if cursor.rowcount == 0:
+            if not self.engine.unprotect_path(path):
                 logger.warning(f"Path not found in protection: {path}")
-                conn.close()
                 return False
-            
-            conn.commit()
-            conn.close()
-            
             logger.info(f"Removed protected path: {path}")
             return True
         except Exception as e:
@@ -165,23 +144,16 @@ class ProtectedPathManager:
         """Enable protection for a path"""
         try:
             path = str(Path(path).absolute())
-            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
-            cursor.execute(
-                'UPDATE protected_paths SET enabled = 1 WHERE path = ?',
-                (path,)
-            )
-            
-            if cursor.rowcount == 0:
-                logger.error(f"Path not found: {path}")
-                conn.close()
-                return False
-            
+            cursor.execute('UPDATE protected_paths SET enabled = 1 WHERE path = ?', (path,))
+            updated = cursor.rowcount > 0
             conn.commit()
             conn.close()
-            
+            if not updated:
+                logger.error(f"Path not found: {path}")
+                return False
+            self.engine.log_event('path_enabled', severity='info', file_path=path, action='enable')
             logger.info(f"Enabled protection for: {path}")
             return True
         except Exception as e:
@@ -192,23 +164,16 @@ class ProtectedPathManager:
         """Disable protection for a path"""
         try:
             path = str(Path(path).absolute())
-            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
-            cursor.execute(
-                'UPDATE protected_paths SET enabled = 0 WHERE path = ?',
-                (path,)
-            )
-            
-            if cursor.rowcount == 0:
-                logger.error(f"Path not found: {path}")
-                conn.close()
-                return False
-            
+            cursor.execute('UPDATE protected_paths SET enabled = 0 WHERE path = ?', (path,))
+            updated = cursor.rowcount > 0
             conn.commit()
             conn.close()
-            
+            if not updated:
+                logger.error(f"Path not found: {path}")
+                return False
+            self.engine.log_event('path_disabled', severity='warning', file_path=path, action='disable')
             logger.info(f"Disabled protection for: {path}")
             return True
         except Exception as e:

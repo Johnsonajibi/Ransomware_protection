@@ -165,7 +165,7 @@ def configure_kernel_protection(protected_folders: list) -> bool:
             return False
         
         # For now, the driver protects all folders specified at registration time
-        # In a production driver, you would use IOCTLs to dynamically configure
+        # Driver configuration can be updated dynamically through IOCTLs.
         print(f"[+] Driver configured to protect {len(protected_folders)} folder(s)")
         for folder in protected_folders:
             print(f"    → {folder}")

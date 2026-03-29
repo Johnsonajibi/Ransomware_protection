@@ -13,7 +13,7 @@ import subprocess
 import sqlite3
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 logging.basicConfig(
     level=logging.INFO,

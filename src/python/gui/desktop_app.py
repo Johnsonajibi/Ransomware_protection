@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QListWidget, QListWidgetItem, QTextEdit, QTabWidget,
     QLineEdit, QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QDialog, QFormLayout, QCheckBox, QSpinBox, QSystemTrayIcon,
-    QMenu, QProgressBar, QGroupBox, QScrollArea, QStyle
+    QMenu, QProgressBar, QGroupBox, QScrollArea, QStyle, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
 from PyQt6.QtGui import QIcon, QPixmap, QFont, QColor, QPalette, QAction
@@ -1139,98 +1139,302 @@ class MainWindow(QMainWindow):
         return widget
     
     def create_alerts_tab(self):
-        """Create email/SIEM alerts configuration tab"""
-        widget = QWidget()
-        layout = QVBoxLayout()
-        
-        # Email alerting
+        """Create email/SIEM alerts configuration tab — scrollable"""
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(14)
+
+        FIELD_H = 32
+        _style_input = (
+            "QLineEdit, QTextEdit, QSpinBox, QComboBox {"
+            "  background: #1e1e2e; color: #e0e0e0;"
+            "  border: 1px solid #3a3a5c; border-radius: 5px; padding: 4px 8px;"
+            "  font-size: 13px;"
+            "}"
+            "QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {"
+            "  border: 1px solid #00bcd4;"
+            "}"
+            "QCheckBox { color: #e0e0e0; font-size: 13px; }"
+            "QCheckBox::indicator { width: 16px; height: 16px; }"
+            "QLabel { color: #b0b0c0; font-size: 13px; }"
+            "QPushButton {"
+            "  background: #00bcd4; color: #000; border-radius: 5px;"
+            "  padding: 7px 18px; font-weight: 600; font-size: 13px;"
+            "}"
+            "QPushButton:hover { background: #00e5ff; }"
+            "QPushButton:disabled { background: #2a2a3e; color: #555; }"
+            "QGroupBox {"
+            "  color: #00bcd4; font-size: 13px; font-weight: 600;"
+            "  border: 1px solid #2a2a4a; border-radius: 7px; margin-top: 10px; padding-top: 8px;"
+            "}"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 6px; }"
+        )
+        content.setStyleSheet(_style_input)
+
+        def _sep():
+            line = QLabel()
+            line.setFixedHeight(1)
+            line.setStyleSheet("background: #2a2a4a;")
+            return line
+
+        # ── Email Alerting ────────────────────────────────────────────────────
         email_group = QGroupBox("Email Alerting")
         email_layout = QFormLayout()
-        
+        email_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        email_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        email_layout.setVerticalSpacing(10)
+        email_layout.setHorizontalSpacing(14)
+
         self.email_enabled_cb = QCheckBox("Enable email alerts")
-        email_layout.addRow(self.email_enabled_cb)
-        
-        self.email_provider_combo = self.create_combo(["Gmail", "Office 365", "Outlook", "Custom SMTP"])
+        email_layout.addRow("", self.email_enabled_cb)
+
+        self.email_provider_combo = QComboBox()
+        self.email_provider_combo.addItems(["Gmail", "Office 365", "Outlook", "Custom SMTP"])
+        self.email_provider_combo.setFixedHeight(FIELD_H)
+        self.email_provider_combo.currentTextChanged.connect(self._on_email_provider_changed)
         email_layout.addRow("Provider:", self.email_provider_combo)
-        
+
         self.email_from = QLineEdit()
+        self.email_from.setFixedHeight(FIELD_H)
+        self.email_from.setPlaceholderText("you@gmail.com")
         email_layout.addRow("From Email:", self.email_from)
-        
+
         self.email_username = QLineEdit()
+        self.email_username.setFixedHeight(FIELD_H)
+        self.email_username.setPlaceholderText("SMTP username / Gmail address")
         email_layout.addRow("SMTP Username:", self.email_username)
-        
+
         self.email_password = QLineEdit()
+        self.email_password.setFixedHeight(FIELD_H)
         self.email_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.email_password.setPlaceholderText("App password (not your login password)")
         email_layout.addRow("SMTP Password:", self.email_password)
-        
+
+        # Custom SMTP fields — hidden by default
+        self.email_smtp_server = QLineEdit()
+        self.email_smtp_server.setFixedHeight(FIELD_H)
+        self.email_smtp_server.setPlaceholderText("smtp.example.com")
+        email_layout.addRow("SMTP Server:", self.email_smtp_server)
+
+        self.email_smtp_port = QSpinBox()
+        self.email_smtp_port.setRange(1, 65535)
+        self.email_smtp_port.setValue(587)
+        self.email_smtp_port.setFixedHeight(FIELD_H)
+        email_layout.addRow("SMTP Port:", self.email_smtp_port)
+
+        self.email_use_tls_cb = QCheckBox("Use TLS/STARTTLS")
+        self.email_use_tls_cb.setChecked(True)
+        email_layout.addRow("", self.email_use_tls_cb)
+
+        self._email_custom_rows = [
+            self.email_smtp_server, self.email_smtp_port, self.email_use_tls_cb
+        ]
+        self._on_email_provider_changed(self.email_provider_combo.currentText())
+
         self.email_recipients = QTextEdit()
-        self.email_recipients.setMaximumHeight(60)
+        self.email_recipients.setFixedHeight(70)
         self.email_recipients.setPlaceholderText("Enter recipient emails, one per line")
         email_layout.addRow("Recipients:", self.email_recipients)
-        
+
+        # Alert level checkboxes
+        levels_widget = QWidget()
+        levels_layout = QHBoxLayout(levels_widget)
+        levels_layout.setContentsMargins(0, 0, 0, 0)
+        levels_layout.setSpacing(10)
+        self.alert_level_cbs = {}
+        for lvl, default in [("CRITICAL", True), ("HIGH", True), ("MEDIUM", True), ("LOW", False), ("INFO", False)]:
+            cb = QCheckBox(lvl)
+            cb.setChecked(default)
+            color = {"CRITICAL": "#ff4444", "HIGH": "#ff7700", "MEDIUM": "#f0a500",
+                     "LOW": "#00bcd4", "INFO": "#aaaaaa"}[lvl]
+            cb.setStyleSheet(f"color: {color}; font-weight: 600;")
+            self.alert_level_cbs[lvl] = cb
+            levels_layout.addWidget(cb)
+        levels_layout.addStretch()
+        email_layout.addRow("Alert Levels:", levels_widget)
+
         test_email_btn = QPushButton("Send Test Email")
         test_email_btn.clicked.connect(self.send_test_email)
-        email_layout.addRow(test_email_btn)
-        
+        test_email_btn.setFixedWidth(180)
+        email_layout.addRow("", test_email_btn)
+
         email_group.setLayout(email_layout)
         layout.addWidget(email_group)
-        
-        # SIEM integration
+
+        # ── SIEM Integration ──────────────────────────────────────────────────
         siem_group = QGroupBox("SIEM Integration")
         siem_layout = QFormLayout()
-        
+        siem_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        siem_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        siem_layout.setVerticalSpacing(10)
+        siem_layout.setHorizontalSpacing(14)
+
         self.siem_enabled_cb = QCheckBox("Enable SIEM forwarding")
-        siem_layout.addRow(self.siem_enabled_cb)
-        
-        self.siem_platform_combo = self.create_combo(["Splunk", "ELK", "QRadar", "Azure Sentinel", "Generic Syslog"])
+        siem_layout.addRow("", self.siem_enabled_cb)
+
+        self.siem_platform_combo = QComboBox()
+        self.siem_platform_combo.addItems(["Splunk", "ELK", "QRadar", "Azure Sentinel", "Generic Syslog"])
+        self.siem_platform_combo.setFixedHeight(FIELD_H)
         siem_layout.addRow("Platform:", self.siem_platform_combo)
-        
+
         self.siem_server = QLineEdit()
+        self.siem_server.setFixedHeight(FIELD_H)
+        self.siem_server.setPlaceholderText("192.168.1.100 or siem.example.com")
         siem_layout.addRow("SIEM Server:", self.siem_server)
-        
+
         self.siem_port = QSpinBox()
         self.siem_port.setRange(1, 65535)
         self.siem_port.setValue(514)
+        self.siem_port.setFixedHeight(FIELD_H)
         siem_layout.addRow("Port:", self.siem_port)
-        
-        self.siem_protocol_combo = self.create_combo(["UDP", "TCP", "TLS"])
+
+        self.siem_protocol_combo = QComboBox()
+        self.siem_protocol_combo.addItems(["UDP", "TCP", "TLS"])
+        self.siem_protocol_combo.setFixedHeight(FIELD_H)
         siem_layout.addRow("Protocol:", self.siem_protocol_combo)
-        
-        self.siem_format_combo = self.create_combo(["RFC 5424", "CEF", "JSON"])
+
+        self.siem_format_combo = QComboBox()
+        self.siem_format_combo.addItems(["RFC 5424", "CEF", "JSON"])
+        self.siem_format_combo.setFixedHeight(FIELD_H)
         siem_layout.addRow("Format:", self.siem_format_combo)
-        
+
         test_siem_btn = QPushButton("Send Test Event")
         test_siem_btn.clicked.connect(self.send_test_siem_event)
-        siem_layout.addRow(test_siem_btn)
-        
+        test_siem_btn.setFixedWidth(180)
+        siem_layout.addRow("", test_siem_btn)
+
         siem_group.setLayout(siem_layout)
         layout.addWidget(siem_group)
-        
-        # Rate limiting
+
+        # ── Rate Limiting ─────────────────────────────────────────────────────
         rate_group = QGroupBox("Rate Limiting")
         rate_layout = QFormLayout()
-        
+        rate_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        rate_layout.setVerticalSpacing(10)
+        rate_layout.setHorizontalSpacing(14)
+
         self.max_emails_hour = QSpinBox()
         self.max_emails_hour.setRange(1, 100)
         self.max_emails_hour.setValue(10)
+        self.max_emails_hour.setFixedHeight(FIELD_H)
+        self.max_emails_hour.setFixedWidth(100)
         rate_layout.addRow("Max emails per hour:", self.max_emails_hour)
-        
+
         self.max_emails_day = QSpinBox()
         self.max_emails_day.setRange(1, 1000)
         self.max_emails_day.setValue(50)
+        self.max_emails_day.setFixedHeight(FIELD_H)
+        self.max_emails_day.setFixedWidth(100)
         rate_layout.addRow("Max emails per day:", self.max_emails_day)
-        
+
+        self.cooldown_seconds = QSpinBox()
+        self.cooldown_seconds.setRange(0, 3600)
+        self.cooldown_seconds.setValue(300)
+        self.cooldown_seconds.setSuffix(" sec")
+        self.cooldown_seconds.setFixedHeight(FIELD_H)
+        self.cooldown_seconds.setFixedWidth(120)
+        rate_layout.addRow("Cooldown between similar alerts:", self.cooldown_seconds)
+
         rate_group.setLayout(rate_layout)
         layout.addWidget(rate_group)
-        
-        # Save button
-        save_alerts_btn = QPushButton("Save Alert Settings")
-        save_alerts_btn.clicked.connect(self.save_alert_settings)
-        layout.addWidget(save_alerts_btn)
-        
+
         layout.addStretch()
-        widget.setLayout(layout)
-        return widget
+
+        scroll.setWidget(content)
+        outer_layout.addWidget(scroll, 1)
+
+        # ── Save button pinned at bottom ──────────────────────────────────────
+        save_alerts_btn = QPushButton("Save Alert Settings")
+        save_alerts_btn.setFixedHeight(42)
+        save_alerts_btn.setStyleSheet(
+            "QPushButton { background: #00bcd4; color: #000; font-weight: 700;"
+            "  font-size: 14px; border-radius: 0; }"
+            "QPushButton:hover { background: #00e5ff; }"
+        )
+        save_alerts_btn.clicked.connect(self.save_alert_settings)
+        outer_layout.addWidget(save_alerts_btn)
+
+        # Populate from saved config on first show
+        QTimer.singleShot(200, self._load_alert_settings_to_ui)
+
+        return outer
+
+    def _on_email_provider_changed(self, provider_text: str):
+        """Show/hide custom SMTP fields based on selected provider."""
+        is_custom = provider_text.lower() == "custom smtp"
+        for w in self._email_custom_rows:
+            w.setVisible(is_custom)
+        # Also show the form labels — find parent form and toggle rows
+        try:
+            fl = self.email_smtp_server.parentWidget().layout()
+            if fl and hasattr(fl, 'labelForField'):
+                for w in self._email_custom_rows:
+                    lbl = fl.labelForField(w)
+                    if lbl:
+                        lbl.setVisible(is_custom)
+        except Exception:
+            pass
+
+    def _load_alert_settings_to_ui(self):
+        """Populate the Alerts tab fields from the live config objects."""
+        try:
+            if HAS_EMAIL and self.email_alerter:
+                cfg = self.email_alerter.config
+                self.email_enabled_cb.setChecked(cfg.get('enabled', False))
+                provider = cfg.get('provider', 'gmail').lower()
+                provider_map = {'gmail': 'Gmail', 'office365': 'Office 365',
+                                'outlook': 'Outlook', 'custom': 'Custom SMTP'}
+                idx = self.email_provider_combo.findText(
+                    provider_map.get(provider, 'Gmail'))
+                if idx >= 0:
+                    self.email_provider_combo.setCurrentIndex(idx)
+                self.email_from.setText(cfg.get('from_email', ''))
+                self.email_username.setText(cfg.get('username', ''))
+                self.email_password.setText(cfg.get('password', ''))
+                self.email_smtp_server.setText(cfg.get('smtp_server', ''))
+                self.email_smtp_port.setValue(cfg.get('smtp_port', 587))
+                self.email_use_tls_cb.setChecked(cfg.get('use_tls', True))
+                recipients = cfg.get('recipients', [])
+                self.email_recipients.setPlainText('\n'.join(recipients))
+                alert_levels = cfg.get('alert_levels', {})
+                for lvl, cb in self.alert_level_cbs.items():
+                    cb.setChecked(alert_levels.get(lvl, lvl in ('CRITICAL', 'HIGH', 'MEDIUM')))
+                rate = cfg.get('rate_limit', {})
+                self.max_emails_hour.setValue(rate.get('max_emails_per_hour', 10))
+                self.max_emails_day.setValue(rate.get('max_emails_per_day', 50))
+                self.cooldown_seconds.setValue(rate.get('cooldown_seconds', 300))
+
+            if HAS_SIEM and self.siem:
+                scfg = self.siem.config
+                self.siem_enabled_cb.setChecked(scfg.get('enabled', False))
+                platform = scfg.get('platform', 'splunk').lower()
+                platform_map = {'splunk': 'Splunk', 'elk': 'ELK', 'qradar': 'QRadar',
+                                'azure_sentinel': 'Azure Sentinel', 'syslog': 'Generic Syslog'}
+                idx = self.siem_platform_combo.findText(platform_map.get(platform, 'Splunk'))
+                if idx >= 0:
+                    self.siem_platform_combo.setCurrentIndex(idx)
+                self.siem_server.setText(scfg.get('siem_server', ''))
+                self.siem_port.setValue(scfg.get('siem_port', 514))
+                proto = scfg.get('protocol', 'udp').upper()
+                idx = self.siem_protocol_combo.findText(proto)
+                if idx >= 0:
+                    self.siem_protocol_combo.setCurrentIndex(idx)
+                fmt = scfg.get('format', 'rfc5424').upper().replace('RFC5424', 'RFC 5424')
+                idx = self.siem_format_combo.findText(fmt)
+                if idx >= 0:
+                    self.siem_format_combo.setCurrentIndex(idx)
+        except Exception as e:
+            print(f"_load_alert_settings_to_ui error: {e}")
     
     def create_shadow_tab(self):
         """Create shadow copy protection tab"""
@@ -1681,6 +1885,20 @@ class MainWindow(QMainWindow):
                     if hasattr(self.main_window, "refresh_recent_events"):
                         QTimer.singleShot(0, self.main_window.refresh_recent_events)
 
+                    # Email alert when USB is absent (token not validated)
+                    usb_absent = not getattr(self.main_window, 'token_validated', True)
+                    if usb_absent and hasattr(self.main_window, '_send_email_alert'):
+                        import os as _os
+                        fname = _os.path.basename(file_path)
+                        self.main_window._send_email_alert(
+                            db_event_type, severity,
+                            {'file': fname,
+                             'path': file_path,
+                             'event': event_type,
+                             'message': f'Security event on protected file while USB absent: '
+                                        f'{event_type} → {fname}'}
+                        )
+
                     import time
                     current_time = time.time()
                     if event_type == "modified":
@@ -1701,6 +1919,15 @@ class MainWindow(QMainWindow):
                             )
                             if hasattr(self.main_window, "refresh_recent_events"):
                                 QTimer.singleShot(0, self.main_window.refresh_recent_events)
+                            # Email: ransomware-like rapid modification
+                            if hasattr(self.main_window, '_send_email_alert'):
+                                self.main_window._send_email_alert(
+                                    'threat_detected', 'CRITICAL',
+                                    {'file': file_path,
+                                     'count': len(self.modification_counts[file_path]),
+                                     'message': f'RANSOMWARE ALERT: {len(self.modification_counts[file_path])} '
+                                                f'rapid modifications in 60s on {file_path}'}
+                                )
                 except Exception as e:
                     print(f"Error in file handler: {e}")
         
@@ -2290,6 +2517,47 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"refresh_recent_events error: {e}")
 
+    def _send_email_alert(self, alert_type: str, severity: str, details: dict):
+        """Send an email alert, bypassing rate-limits and level-filters.
+
+        Runs in a daemon thread so it never blocks the GUI.
+        Only fires if email alerting is configured (has recipients and credentials).
+        """
+        if not (HAS_EMAIL and self.email_alerter):
+            return
+        cfg = self.email_alerter.config
+        if not cfg.get('recipients'):
+            return  # nowhere to send
+        if not (cfg.get('username') or cfg.get('smtp_server')):
+            return  # not configured
+
+        import threading as _threading
+
+        def _send():
+            try:
+                # Temporarily force enabled + all levels + disable rate-limiting
+                orig_enabled = cfg.get('enabled', False)
+                orig_levels  = cfg.get('alert_levels', {}).copy()
+                orig_rl      = cfg.get('rate_limit', {}).get('enabled', True)
+                orig_history = list(self.email_alerter.alert_history.get('alerts', []))
+
+                cfg['enabled'] = True
+                cfg['alert_levels'] = {k: True for k in ('CRITICAL','HIGH','MEDIUM','LOW','INFO')}
+                cfg.setdefault('rate_limit', {})['enabled'] = False
+                self.email_alerter.alert_history['alerts'] = []
+
+                try:
+                    self.email_alerter.send_alert(alert_type, severity, details, attach_logs=False)
+                finally:
+                    cfg['enabled'] = orig_enabled
+                    cfg['alert_levels'] = orig_levels
+                    cfg['rate_limit']['enabled'] = orig_rl
+                    self.email_alerter.alert_history['alerts'] = orig_history
+            except Exception as e:
+                print(f"Email alert error: {e}")
+
+        _threading.Thread(target=_send, daemon=True).start()
+
     def _poll_kernel_events(self):
         """Poll the kernel driver's blocked-access ring buffer every second.
 
@@ -2325,16 +2593,12 @@ class MainWindow(QMainWindow):
                         'HIGH'
                     )
 
-                # Email alert
-                try:
-                    if self.email_alerter:
-                        self.email_alerter.send_alert(
-                            'FILE_ACCESS_BLOCKED',
-                            'HIGH',
-                            {'file': display, 'pid': pid, 'path': path}
-                        )
-                except Exception:
-                    pass
+                # Email alert — file access blocked while USB absent
+                self._send_email_alert(
+                    'FILE_ACCESS_BLOCKED', 'HIGH',
+                    {'file': display, 'pid': pid, 'path': path,
+                     'message': f'Kernel blocked access attempt to protected file: {display}'}
+                )
 
             # Refresh dashboard event list immediately
             self.refresh_recent_events()
@@ -2616,6 +2880,16 @@ class MainWindow(QMainWindow):
 
                 self.token_validated = True
 
+                # Email: manual token validated + files unlocked
+                protected = [p['path'] for p in (self.db.get_protected_paths() if self.db else [])]
+                self._send_email_alert(
+                    'USB_TOKEN_VALIDATED', 'MEDIUM',
+                    {'drive': drive_path,
+                     'tokens': len(valid_tokens),
+                     'protected_paths': ', '.join(protected) or 'none',
+                     'message': f'USB token manually validated on {drive_path} — protected files are now accessible'}
+                )
+
                 # --- Start USB removal watcher ---
                 if self.usb_watcher:
                     self.usb_watcher.stop()
@@ -2724,6 +2998,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"USB token auto-validated — access granted")
             print(f"Auto-validated {len(valid_tokens)} token(s) from {drive_path}")
 
+            # Email: USB inserted + files unlocked
+            protected = [p['path'] for p in (self.db.get_protected_paths() if self.db else [])]
+            self._send_email_alert(
+                'USB_TOKEN_VALIDATED', 'MEDIUM',
+                {'drive': drive_path,
+                 'tokens': len(valid_tokens),
+                 'protected_paths': ', '.join(protected) or 'none',
+                 'message': f'USB token validated on {drive_path} — protected files are now accessible'}
+            )
+
             # Start removal watcher
             if self.usb_watcher:
                 self.usb_watcher.stop()
@@ -2756,6 +3040,15 @@ class MainWindow(QMainWindow):
                 pass
         QTimer.singleShot(0, self.refresh_recent_events)
         self.token_validated = False
+
+        # Email: USB removed — files re-locked
+        protected = [p['path'] for p in (self.db.get_protected_paths() if self.db else [])]
+        self._send_email_alert(
+            'USB_TOKEN_REMOVED', 'HIGH',
+            {'drive': drive_path,
+             'protected_paths': ', '.join(protected) or 'none',
+             'message': f'USB token removed ({drive_path}) — protected files are now locked'}
+        )
 
         # 1. Re-enable kernel path-guard
         if HAS_KERNEL_PROTECTION and self.kernel_protection and self.protection_active:
@@ -2920,29 +3213,82 @@ class MainWindow(QMainWindow):
         if not HAS_EMAIL or not self.email_alerter:
             QMessageBox.warning(self, "Not Available", "Email alerting not available")
             return
-        
+
+        if not self.email_recipients.toPlainText().strip():
+            QMessageBox.warning(self, "No Recipients",
+                                "Add at least one recipient email before sending a test.")
+            return
+
         try:
-            # Update config from GUI
-            self.email_alerter.config['enabled'] = self.email_enabled_cb.isChecked()
-            self.email_alerter.config['from_email'] = self.email_from.text()
-            self.email_alerter.config['username'] = self.email_username.text()
-            self.email_alerter.config['password'] = self.email_password.text()
-            self.email_alerter.config['recipients'] = [
-                r.strip() for r in self.email_recipients.toPlainText().split('\n') if r.strip()
+            provider_map = {'Gmail': 'gmail', 'Office 365': 'office365',
+                            'Outlook': 'outlook', 'Custom SMTP': 'custom'}
+            self.email_alerter.config['enabled']     = True
+            self.email_alerter.config['provider']    = provider_map.get(
+                self.email_provider_combo.currentText(), 'gmail')
+            self.email_alerter.config['from_email']  = self.email_from.text().strip()
+            self.email_alerter.config['username']    = self.email_username.text().strip()
+            self.email_alerter.config['password']    = self.email_password.text()
+            self.email_alerter.config['smtp_server'] = self.email_smtp_server.text().strip()
+            self.email_alerter.config['smtp_port']   = self.email_smtp_port.value()
+            self.email_alerter.config['use_tls']     = self.email_use_tls_cb.isChecked()
+            self.email_alerter.config['recipients']  = [
+                r.strip() for r in self.email_recipients.toPlainText().split('\n')
+                if r.strip()
             ]
-            
-            success = self.email_alerter.send_alert(
-                alert_type='TEST_ALERT',
-                severity='INFO',
-                details={'message': 'Test email from Anti-Ransomware GUI'},
-                attach_logs=False
-            )
-            
+
+            # Temporarily enable all alert levels and bypass rate limits for the test
+            _orig_levels   = self.email_alerter.config.get('alert_levels', {}).copy()
+            _orig_rl       = self.email_alerter.config.get('rate_limit', {}).get('enabled', True)
+            _orig_history  = list(self.email_alerter.alert_history.get('alerts', []))
+            self.email_alerter.config['alert_levels'] = {
+                lvl: True for lvl in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO')
+            }
+            self.email_alerter.config['rate_limit']['enabled'] = False
+            self.email_alerter.alert_history['alerts'] = []
+
+            try:
+                success = self.email_alerter.send_alert(
+                    alert_type='TEST_ALERT',
+                    severity='INFO',
+                    details={'message': 'Test email from Anti-Ransomware GUI'},
+                    attach_logs=False
+                )
+            finally:
+                # Always restore original settings
+                self.email_alerter.config['alert_levels'] = _orig_levels
+                self.email_alerter.config['rate_limit']['enabled'] = _orig_rl
+                self.email_alerter.alert_history['alerts'] = _orig_history
+
+            smtp_err = getattr(self.email_alerter, '_last_send_error', '')
             if success:
-                QMessageBox.information(self, "Success", "Test email sent successfully!")
+                recipients = ', '.join(self.email_alerter.config.get('recipients', []))
+                QMessageBox.information(self, "Success",
+                                        f"Test email sent successfully!\n\nCheck your inbox at:\n{recipients}")
+            elif smtp_err and 'SPAM_CHALLENGE' in smtp_err:
+                # Extract the tag that was tried
+                parts = smtp_err.split(':', 2)
+                tag = parts[1] if len(parts) > 1 else ''
+                QMessageBox.information(self, "Config OK — Server Spam Filter",
+                                        "Your SMTP credentials and server are correct.\n\n"
+                                        "The mail server is running a spam-filter challenge:\n"
+                                        f"  Code tried: {tag}\n\n"
+                                        "This happens because the Anti-Ransomware app is a\n"
+                                        "new sender on your mail server. Options:\n\n"
+                                        "1. Whitelist the sender in your mail server's spam\n"
+                                        "   filter (recommended for a security tool).\n\n"
+                                        "2. Wait 5–15 minutes and try again — most spam\n"
+                                        "   filters auto-approve after a retry delay.\n\n"
+                                        "Your configuration is saved and will work once the\n"
+                                        "server whitelist is updated.")
             else:
-                QMessageBox.warning(self, "Failed", "Failed to send test email. Check configuration.")
-                
+                detail = f"\n\nSMTP error:\n  {smtp_err}" if smtp_err else ""
+                QMessageBox.warning(self, "Failed",
+                                    f"Failed to send test email.{detail}\n\n"
+                                    "Common fixes:\n"
+                                    "• Port 25: TLS must be OFF\n"
+                                    "• Port 587: TLS/STARTTLS ON\n"
+                                    "• Port 465: handled as SSL (TLS OFF)\n"
+                                    "• Verify server hostname and credentials")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Email test failed: {e}")
     
@@ -2980,39 +3326,89 @@ class MainWindow(QMainWindow):
     
     def save_alert_settings(self):
         """Save alert configuration"""
-        try:
-            # Save email config
-            if HAS_EMAIL and self.email_alerter:
-                self.email_alerter.config['enabled'] = self.email_enabled_cb.isChecked()
-                self.email_alerter.config['from_email'] = self.email_from.text()
-                self.email_alerter.config['username'] = self.email_username.text()
-                self.email_alerter.config['password'] = self.email_password.text()
-                self.email_alerter.config['recipients'] = [
-                    r.strip() for r in self.email_recipients.toPlainText().split('\n') if r.strip()
+        import json as _json
+
+        errors = []
+
+        # ── Email config ──────────────────────────────────────────────────────
+        if HAS_EMAIL and self.email_alerter:
+            try:
+                provider_map = {'Gmail': 'gmail', 'Office 365': 'office365',
+                                'Outlook': 'outlook', 'Custom SMTP': 'custom'}
+                provider_key = provider_map.get(
+                    self.email_provider_combo.currentText(), 'gmail')
+
+                self.email_alerter.config['enabled']     = self.email_enabled_cb.isChecked()
+                self.email_alerter.config['provider']    = provider_key
+                self.email_alerter.config['from_email']  = self.email_from.text().strip()
+                self.email_alerter.config['username']    = self.email_username.text().strip()
+                self.email_alerter.config['password']    = self.email_password.text()
+                self.email_alerter.config['smtp_server'] = self.email_smtp_server.text().strip()
+                self.email_alerter.config['smtp_port']   = self.email_smtp_port.value()
+                self.email_alerter.config['use_tls']     = self.email_use_tls_cb.isChecked()
+                self.email_alerter.config['recipients']  = [
+                    r.strip() for r in self.email_recipients.toPlainText().split('\n')
+                    if r.strip()
                 ]
-                self.email_alerter.config['rate_limit']['max_emails_per_hour'] = self.max_emails_hour.value()
-                self.email_alerter.config['rate_limit']['max_emails_per_day'] = self.max_emails_day.value()
-                
-                # Save to file
-                import json
+                self.email_alerter.config['alert_levels'] = {
+                    lvl: cb.isChecked() for lvl, cb in self.alert_level_cbs.items()
+                }
+                if 'rate_limit' not in self.email_alerter.config:
+                    self.email_alerter.config['rate_limit'] = {}
+                self.email_alerter.config['rate_limit']['max_emails_per_hour'] = \
+                    self.max_emails_hour.value()
+                self.email_alerter.config['rate_limit']['max_emails_per_day'] = \
+                    self.max_emails_day.value()
+                self.email_alerter.config['rate_limit']['cooldown_seconds'] = \
+                    self.cooldown_seconds.value()
+
                 with self.email_alerter.config_file.open('w') as f:
-                    json.dump(self.email_alerter.config, f, indent=2)
-            
-            # Save SIEM config
-            if HAS_SIEM and self.siem:
-                self.siem.config['enabled'] = self.siem_enabled_cb.isChecked()
-                self.siem.config['siem_server'] = self.siem_server.text()
-                self.siem.config['siem_port'] = self.siem_port.value()
-                self.siem.config['protocol'] = self.siem_protocol_combo.currentText().lower()
-                
-                # Save to file
+                    _json.dump(self.email_alerter.config, f, indent=2)
+            except PermissionError:
+                import tempfile
+                tmp = Path(tempfile.gettempdir()) / 'AntiRansomware' / 'email_config.json'
+                tmp.parent.mkdir(parents=True, exist_ok=True)
+                with tmp.open('w') as f:
+                    _json.dump(self.email_alerter.config, f, indent=2)
+                self.email_alerter.config_file = tmp
+            except Exception as e:
+                errors.append(f"Email config: {e}")
+
+        # ── SIEM config ───────────────────────────────────────────────────────
+        if HAS_SIEM and self.siem:
+            try:
+                platform_map = {'Splunk': 'splunk', 'ELK': 'elk', 'QRadar': 'qradar',
+                                'Azure Sentinel': 'azure_sentinel',
+                                'Generic Syslog': 'syslog'}
+                fmt_map = {'RFC 5424': 'rfc5424', 'CEF': 'cef', 'JSON': 'json'}
+
+                self.siem.config['enabled']     = self.siem_enabled_cb.isChecked()
+                self.siem.config['platform']    = platform_map.get(
+                    self.siem_platform_combo.currentText(), 'splunk')
+                self.siem.config['siem_server'] = self.siem_server.text().strip()
+                self.siem.config['siem_port']   = self.siem_port.value()
+                self.siem.config['protocol']    = \
+                    self.siem_protocol_combo.currentText().lower()
+                self.siem.config['format']      = fmt_map.get(
+                    self.siem_format_combo.currentText(), 'rfc5424')
+
                 with self.siem.config_file.open('w') as f:
-                    json.dump(self.siem.config, f, indent=2)
-            
-            QMessageBox.information(self, "Success", "Alert settings saved successfully!")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save settings: {e}")
+                    _json.dump(self.siem.config, f, indent=2)
+            except PermissionError:
+                import tempfile
+                tmp = Path(tempfile.gettempdir()) / 'AntiRansomware' / 'siem_config.json'
+                tmp.parent.mkdir(parents=True, exist_ok=True)
+                with tmp.open('w') as f:
+                    _json.dump(self.siem.config, f, indent=2)
+                self.siem.config_file = tmp
+            except Exception as e:
+                errors.append(f"SIEM config: {e}")
+
+        if errors:
+            QMessageBox.warning(self, "Partial Save",
+                                "Settings saved with warnings:\n" + "\n".join(errors))
+        else:
+            QMessageBox.information(self, "Saved", "Alert settings saved successfully!")
     
     def start_shadow_protection(self):
         """Start shadow copy monitoring"""

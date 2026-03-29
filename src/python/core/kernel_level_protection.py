@@ -115,8 +115,8 @@ import shlex
         print("   → For development: Enable test signing")
         print("   → Use Windows Driver Kit (WDK)")
     
-    def create_kernel_driver_stub(self):
-        """Create a kernel driver stub (C code that needs compilation)"""
+    def create_kernel_driver_project(self):
+        """Create a complete kernel driver source package for WDK compilation."""
         
         driver_source = '''/*
  * Anti-Ransomware Kernel Driver
@@ -416,12 +416,87 @@ NTSTATUS AntiRansomwareCreateClose(
         driver_source_path = Path(__file__).parent / f"{self.driver_name}.c"
         with open(driver_source_path, 'w') as f:
             f.write(driver_source)
+
+        inf_path = Path(__file__).parent / f"{self.driver_name}.inf"
+        inf_path.write_text(
+            f"""[Version]
+Signature="$WINDOWS NT$"
+Class=ActivityMonitor
+ClassGuid={{b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}}
+Provider=%ProviderName%
+DriverVer=03/26/2026,1.0.0.0
+CatalogFile={self.driver_name}.cat
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[DefaultInstall]
+CopyFiles = DriverCopyFiles
+
+[DefaultInstall.Services]
+AddService = {self.driver_name},,DriverService
+
+[DriverCopyFiles]
+{self.driver_name}.sys
+
+[DriverService]
+DisplayName    = %ServiceName%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %12%\\{self.driver_name}.sys
+
+[Strings]
+ProviderName = "AntiRansomware"
+ServiceName = "{self.driver_name}"
+""",
+            encoding="utf-8",
+        )
+
+        vcxproj_path = Path(__file__).parent / f"{self.driver_name}.vcxproj"
+        vcxproj_path.write_text(
+            f"""<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectName>{self.driver_name}</ProjectName>
+    <Keyword>DriverProj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Driver</ConfigurationType>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
+  <ItemGroup>
+    <ClCompile Include="{self.driver_name}.c" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
+</Project>
+""",
+            encoding="utf-8",
+        )
         
         print(f"✅ Kernel driver source created: {driver_source_path}")
-        print("📝 Note: This requires Windows Driver Kit (WDK) to compile")
+        print(f"✅ Driver INF created: {inf_path}")
+        print(f"✅ Driver project created: {vcxproj_path}")
+        print("📝 Use WDK msbuild on the generated .vcxproj to compile the driver")
         
         return driver_source_path
-    
+
     def install_kernel_protection(self):
         """Install kernel-level protection (requires compiled driver)"""
         
@@ -554,7 +629,7 @@ def main():
     # Create driver source
     print("\n2️⃣ CREATING KERNEL DRIVER SOURCE")
     print("-" * 50)
-    driver_path = kernel_protection.create_kernel_driver_stub()
+    driver_path = kernel_protection.create_kernel_driver_project()
     
     print("\n3️⃣ KERNEL DRIVER COMPILATION INSTRUCTIONS")
     print("-" * 50)

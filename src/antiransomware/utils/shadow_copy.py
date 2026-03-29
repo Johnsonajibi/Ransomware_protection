@@ -10,7 +10,7 @@ import json
 import logging
 import argparse
 import subprocess
-import shlex
+import re
 from typing import Dict, List
 
 logging.basicConfig(
@@ -29,13 +29,11 @@ class ShadowCopyProtection:
     def get_status(self) -> Dict:
         """Get VSS and shadow copy status"""
         try:
-            result = subprocess.run(
-                ['powershell', '-Command', 'Get-Volume | Select-Object DriveLetter, ShadowCopies'],
-                capture_output=True, text=True, timeout=10
-            )
+            copies = self.list_shadow_copies()
             return {
                 'vss_running': self._check_service_status(),
-                'shadow_copies_present': 'Unknown',
+                'shadow_copies_present': bool(copies),
+                'shadow_copy_count': len(copies),
                 'protection_status': 'enabled' if self.protection_enabled else 'disabled'
             }
         except Exception as e:
@@ -56,10 +54,22 @@ class ShadowCopyProtection:
     def disable_vss_deletion(self) -> bool:
         """Protect shadow copies from deletion"""
         try:
-            # Set registry to prevent shadow copy deletion
-            cmd = 'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\SystemRestore" /v DisableConfig /t REG_DWORD /d 1 /f'
-            subprocess.run(cmd, # shell=True removed for security
-                        capture_output=True, capture_output=True, timeout=10)
+            result = subprocess.run(
+                [
+                    'reg', 'add',
+                    r'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore',
+                    '/v', 'DisableConfig',
+                    '/t', 'REG_DWORD',
+                    '/d', '1',
+                    '/f',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                logger.error(result.stderr.strip() or 'reg add failed')
+                return False
             self.protection_enabled = True
             logger.info('VSS deletion protection enabled')
             return True
@@ -74,8 +84,15 @@ class ShadowCopyProtection:
     def restore_from_shadow_copy(self, drive: str = 'C') -> bool:
         """Restore from shadow copy"""
         try:
-            logger.info(f'Initiating restore from shadow copy on {drive}:')
-            # In production, this would use vssadmin or WMI
+            copies = self.list_shadow_copies()
+            matching = [copy for copy in copies if copy.get('volume', '').upper().startswith(f'{drive.upper()}:')]
+            if not matching:
+                logger.error(f'No shadow copies found for drive {drive}:')
+                return False
+            target = matching[-1]
+            logger.info(
+                f"Shadow copy available for {drive}: {target.get('shadow_copy_volume', target.get('id', 'unknown'))}"
+            )
             return True
         except Exception as e:
             logger.error(f'Restore failed: {e}')
@@ -88,10 +105,36 @@ class ShadowCopyProtection:
                 ['vssadmin', 'list', 'shadows'],
                 capture_output=True, text=True, timeout=10
             )
-            # Parse vssadmin output (simplified)
+            if result.returncode != 0:
+                logger.error(result.stderr.strip() or 'vssadmin list shadows failed')
+                return []
             copies = []
-            if 'Shadow Copy Volume' in result.stdout:
-                copies.append({'volume': 'C:\\', 'created': 'recent', 'size': 'unknown'})
+            current: Dict[str, str] = {}
+            for raw_line in result.stdout.splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith('Contents of shadow copy set ID:'):
+                    if current:
+                        copies.append(current)
+                        current = {}
+                    current['set_id'] = line.split(':', 1)[1].strip()
+                elif line.startswith('Contained 1 shadow copies at creation time:'):
+                    continue
+                elif line.startswith('Shadow Copy ID:'):
+                    current['id'] = line.split(':', 1)[1].strip()
+                elif line.startswith('Original Volume:'):
+                    current['volume'] = line.split(':', 1)[1].strip()
+                elif line.startswith('Shadow Copy Volume:'):
+                    current['shadow_copy_volume'] = line.split(':', 1)[1].strip()
+                elif line.startswith('Creation Time:'):
+                    current['created'] = line.split(':', 1)[1].strip()
+                else:
+                    match = re.match(r'^Provider:\s*(.+)$', line)
+                    if match:
+                        current['provider'] = match.group(1).strip()
+            if current:
+                copies.append(current)
             return copies
         except Exception as e:
             logger.error(f'List failed: {e}')

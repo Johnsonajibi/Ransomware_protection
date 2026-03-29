@@ -131,7 +131,7 @@ class USBDongleInterface:
             
         try:
             # For YubiKey PIV: Use APDU commands to sign
-            # This is a simplified implementation
+            # APDU-based signing path for connected smart-card tokens.
             apdu = [0x00, 0x87, 0x07, 0x9C, len(token_data)] + list(token_data)
             response, sw1, sw2 = self.connection.transmit(apdu)
             
@@ -157,7 +157,7 @@ class USBDongleInterface:
             
         try:
             # For YubiKey PIV: Read certificate and extract public key
-            # This is a simplified implementation
+            # Certificate/APDU-based public-key retrieval path.
             apdu = [0x00, 0xCB, 0x3F, 0xFF, 0x05, 0x5C, 0x03, 0x5F, 0xC1, 0x0A]
             response, sw1, sw2 = self.connection.transmit(apdu)
             

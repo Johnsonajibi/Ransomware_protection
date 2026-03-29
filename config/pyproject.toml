@@ -58,8 +58,11 @@ Repository = "https://github.com/johnsonajibi/Ransomware_protection"
 Issues = "https://github.com/johnsonajibi/Ransomware_protection/issues"
 
 [tool.setuptools]
-packages = ["antiransomware"]
 package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["antiransomware*"]
 
 [tool.setuptools.package-data]
 antiransomware = ["py.typed", "*.pyi"]

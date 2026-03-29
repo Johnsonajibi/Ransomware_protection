@@ -39,7 +39,7 @@ from elasticsearch import Elasticsearch
 from policy_engine import PolicyEngine, Policy, PathRule, Quota, ProcessRule, TimeWindow
 from ar_token import TokenVerifier, ARToken
 
-# gRPC proto (optional; fallback stubs if not generated)
+# gRPC proto import with runtime fallback if generated bindings are absent.
 try:
     import admin_pb2
     import admin_pb2_grpc

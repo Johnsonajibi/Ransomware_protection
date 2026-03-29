@@ -9,6 +9,9 @@ import sys
 import json
 import logging
 import argparse
+import shutil
+import sqlite3
+import subprocess
 from typing import Dict
 
 logging.basicConfig(level=logging.INFO)
@@ -21,8 +24,8 @@ class SystemHealthChecker:
     def check_disk_space(self) -> Dict:
         """Check available disk space"""
         try:
-            import shutil
-            total, used, free = shutil.disk_usage('/')
+            system_drive = os.environ.get("SystemDrive", "C:")
+            total, used, free = shutil.disk_usage(system_drive)
             return {
                 'check': 'disk_space',
                 'free_gb': round(free / (1024**3), 2),
@@ -52,8 +55,22 @@ class SystemHealthChecker:
         services = ['AntiRansomwareDriver', 'AntiRansomwareMonitor']
         status_map = {}
         for svc in services:
-            # Stub: would check actual service status
-            status_map[svc] = 'running'
+            try:
+                result = subprocess.run(
+                    ['sc', 'query', svc],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                stdout = (result.stdout or '').upper()
+                if 'RUNNING' in stdout:
+                    status_map[svc] = 'running'
+                elif 'STOPPED' in stdout:
+                    status_map[svc] = 'stopped'
+                else:
+                    status_map[svc] = 'unknown'
+            except Exception:
+                status_map[svc] = 'unknown'
         return {
             'check': 'protection_services',
             'services': status_map,
@@ -63,9 +80,8 @@ class SystemHealthChecker:
     def check_database_integrity(self) -> Dict:
         """Check database integrity"""
         try:
-            import sqlite3
-            # Check main databases
             dbs = ['admin.db', 'protection_db.sqlite']
+            checked = {}
             for db in dbs:
                 if os.path.exists(db):
                     conn = sqlite3.connect(db)
@@ -73,7 +89,9 @@ class SystemHealthChecker:
                     cursor.execute('PRAGMA integrity_check')
                     result = cursor.fetchone()
                     conn.close()
-            return {'check': 'database_integrity', 'status': 'ok'}
+                    checked[db] = result[0] if result else 'unknown'
+            status = 'ok' if all(value == 'ok' for value in checked.values()) else 'warning'
+            return {'check': 'database_integrity', 'status': status, 'databases': checked}
         except Exception as e:
             return {'check': 'database_integrity', 'status': 'error', 'error': str(e)}
 
@@ -87,7 +105,7 @@ class SystemHealthChecker:
         }
         overall = 'healthy' if all(c.get('status') in ['ok', 'running'] for c in all_checks.values()) else 'issues_detected'
         return {
-            'timestamp': '2026-01-26T12:00:00',
+            'timestamp': __import__('datetime').datetime.now().isoformat(),
             'overall_status': overall,
             'checks': all_checks
         }

@@ -1,9 +1,9 @@
-"""Core protection engine components"""
+"""Core protection engine components."""
 
-from .protection import ProtectionEngine
-from .token_manager import TokenManager
-from .audit import AuditLogger
+from .audit import AuditLogViewer as AuditLogger
+from .engine import ProtectionEngine
 from .policy import PolicyEngine
+from .token_manager import TrifactorAuthManager as TokenManager
 
 __all__ = [
     'ProtectionEngine',

@@ -26,6 +26,7 @@ import servicemanager
 import pywintypes
 import yaml
 import sqlite3
+import psutil
 from dataclasses import dataclass
 
 # Configure logging
@@ -326,9 +327,7 @@ class FileSystemMonitor:
     def _handle_file_event(self, action: int, file_path: str):
         """Handle a file system event"""
         try:
-            # Get process that made the change
-            # Note: This is simplified - real implementation would use ETW or driver
-            process_id = os.getpid()  # Current service PID
+            process_id = self._resolve_process_id(file_path)
             
             # Check if process is already blocked
             if process_id in self.blocked_processes:
@@ -357,6 +356,18 @@ class FileSystemMonitor:
         
         except Exception as e:
             logger.error(f"Error handling file event: {e}")
+
+    def _resolve_process_id(self, file_path: str) -> int:
+        """Best-effort process attribution using current open-file handles."""
+        normalized = os.path.abspath(file_path).lower()
+        for proc in psutil.process_iter(['pid', 'open_files']):
+            try:
+                for opened in proc.info.get('open_files') or []:
+                    if os.path.abspath(opened.path).lower() == normalized:
+                        return int(proc.info['pid'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                continue
+        return os.getpid()
     
     def start(self):
         """Start monitoring all protected paths"""

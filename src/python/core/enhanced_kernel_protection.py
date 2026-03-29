@@ -12,6 +12,7 @@ import threading
 import time
 import subprocess
 from pathlib import Path
+import psutil
 
 # Windows API Constants
 GENERIC_READ = 0x80000000
@@ -178,8 +179,11 @@ class KernelLevelProtection:
         """Monitor processes using Restart Manager"""
         while self.monitoring:
             try:
-                # This would enumerate affected processes
-                # Implementation would check for ransomware behavior
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    cmdline = " ".join(proc.info.get('cmdline') or []).lower()
+                    name = (proc.info.get('name') or '').lower()
+                    if name in {'vssadmin.exe', 'wbadmin.exe'} and 'delete' in cmdline:
+                        print(f"🚨 Suspicious backup tampering process detected: {name} ({proc.info['pid']})")
                 time.sleep(1)
             except Exception:
                 break
@@ -188,18 +192,45 @@ class KernelLevelProtection:
         """Monitor Volume Shadow Copy deletion attempts"""
         while self.monitoring:
             try:
-                # Monitor vssadmin.exe and wmic.exe executions
-                # Block shadow copy deletion commands
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    name = (proc.info.get('name') or '').lower()
+                    cmdline = " ".join(proc.info.get('cmdline') or []).lower()
+                    if name in {'vssadmin.exe', 'wmic.exe', 'powershell.exe'} and (
+                        'delete shadows' in cmdline or 'shadowcopy delete' in cmdline
+                    ):
+                        try:
+                            proc.terminate()
+                            print(f"🛡️ Blocked shadow-copy deletion attempt: {name} ({proc.info['pid']})")
+                        except Exception:
+                            pass
                 time.sleep(2)
             except Exception:
                 break
     
     def _etw_filesystem_monitor(self):
         """Monitor filesystem events via ETW"""
+        watched_dirs = [Path.home() / "Documents", Path.home() / "Desktop"]
+        baseline = {}
         while self.monitoring:
             try:
-                # Monitor file creation, deletion, modification patterns
-                # Detect rapid encryption patterns typical of ransomware
+                rapid_changes = 0
+                now = time.time()
+                for directory in watched_dirs:
+                    if not directory.exists():
+                        continue
+                    for file_path in directory.rglob("*"):
+                        if not file_path.is_file():
+                            continue
+                        try:
+                            mtime = file_path.stat().st_mtime
+                        except OSError:
+                            continue
+                        previous = baseline.get(str(file_path), 0.0)
+                        baseline[str(file_path)] = mtime
+                        if mtime > previous and now - mtime < 10:
+                            rapid_changes += 1
+                if rapid_changes > 25:
+                    print(f"🚨 High-rate filesystem mutation detected: {rapid_changes} recent changes")
                 time.sleep(1)
             except Exception:
                 break
@@ -223,9 +254,12 @@ class KernelLevelProtection:
     def _apply_kernel_file_protection(self, file_path):
         """Apply kernel-level file protection"""
         try:
-            # Use Windows Security APIs to set restrictive ACLs
-            # This prevents even administrative access without proper token
-            pass
+            subprocess.run(
+                ['attrib', '+R', file_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
         except Exception:
             pass
     

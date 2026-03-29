@@ -10,6 +10,7 @@ import sqlite3
 import json
 import traceback
 import logging
+import tempfile
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
@@ -39,8 +40,24 @@ import threading
 # Configure comprehensive logging
 def setup_logging():
     """Setup rotating file handler for comprehensive logging"""
-    log_dir = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'AntiRansomware' / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
+    candidate_dirs = [
+        Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'AntiRansomware' / 'logs',
+        Path.cwd() / 'logs' / 'gui',
+        Path(tempfile.gettempdir()) / 'AntiRansomware' / 'logs',
+    ]
+
+    log_dir = None
+    for candidate in candidate_dirs:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            log_dir = candidate
+            break
+        except (PermissionError, FileExistsError, OSError):
+            continue
+
+    if log_dir is None:
+        raise RuntimeError("Unable to initialize any logging directory")
+
     log_file = log_dir / 'antiransomware.log'
     
     # Create formatter for detailed logs

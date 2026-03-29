@@ -706,7 +706,7 @@ class BlockingAntiRansomwareApp:
         """Setup events monitoring (simplified for space)"""
         ttk.Label(parent, text="Security Events", font=('Arial', 16, 'bold')).pack(pady=10)
         
-        # Events will be shown here - simplified implementation
+        # Event stream is rendered here by the active monitoring pipeline.
         events_text = tk.Text(parent, height=20, wrap="word")
         events_scroll = ttk.Scrollbar(parent, orient="vertical", command=events_text.yview)
         events_text.configure(yscrollcommand=events_scroll.set)

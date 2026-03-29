@@ -14,6 +14,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from antiransomware.core.engine import ProtectionEngine
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +33,7 @@ class SecurityEventAnalyzer:
     
     def __init__(self, db_path: str = "protection_db.sqlite"):
         self.db_path = Path(db_path)
+        self.engine = ProtectionEngine(str(self.db_path))
         self.init_database()
     
     def init_database(self):
@@ -218,19 +221,16 @@ class SecurityEventAnalyzer:
     def get_protection_status(self) -> Dict:
         """Get protection component status"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT component, status, details, last_check
-                FROM system_status
-            ''')
-            
-            columns = ['component', 'status', 'details', 'last_check']
-            status_rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            
-            conn.close()
-            
+            component_state = self.engine.get_component_status()
+            status_rows = [
+                {
+                    'component': component,
+                    'status': 'operational' if enabled else 'disabled',
+                    'details': '',
+                    'last_check': datetime.now().isoformat(),
+                }
+                for component, enabled in component_state.items()
+            ]
             if not status_rows:
                 return {'status': 'unknown', 'components': []}
             
