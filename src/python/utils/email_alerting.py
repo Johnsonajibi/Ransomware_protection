@@ -441,11 +441,16 @@ class EmailAlertingSystem:
             # Connect to SMTP server
             _console_print(f"   Connecting to {smtp_server}:{smtp_port}...")
 
-            # Use the SMTP server's own domain as the EHLO name.
-            # Using the from_email domain (e.g. gmail.com) against a corporate
-            # SMTP server triggers spam/relay rejections. The server domain is
-            # always the right value for an internal sender.
-            ehlo_name = smtp_server
+            # Use the sender's domain as the EHLO name.
+            # Corporate mail servers reject EHLO from unknown hostnames
+            # ("LOCALDOMAIN" rejection). Sending EHLO <domain> where domain
+            # matches the from_email domain (e.g. jtnetsolutions.com from
+            # user@jtnetsolutions.com) satisfies relay-protection rules.
+            from_email = self.config.get('from_email', '')
+            if '@' in from_email:
+                ehlo_name = from_email.split('@', 1)[1]
+            else:
+                ehlo_name = smtp_server
 
             # Port 465 uses implicit SSL (SMTP_SSL); all others use STARTTLS or plain
             if smtp_port == 465:
