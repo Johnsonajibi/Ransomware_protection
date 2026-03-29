@@ -36,14 +36,23 @@ SERVICE_AUTO_START = 0x00000002
 SERVICE_ERROR_NORMAL = 0x00000001
 
 # Driver IOCTL codes
-IOCTL_ANTIRANSOMWARE_SET_PROTECTION = 0x222004
-IOCTL_ANTIRANSOMWARE_GET_STATUS = 0x222008
-IOCTL_ANTIRANSOMWARE_ADD_EXCLUSION = 0x22200C
+IOCTL_ANTIRANSOMWARE_SET_PROTECTION     = 0x222000   # CTL_CODE(0x22, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+IOCTL_ANTIRANSOMWARE_GET_STATUS         = 0x226004   # CTL_CODE(0x22, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
+IOCTL_ANTIRANSOMWARE_ADD_EXCLUSION      = 0x222008   # CTL_CODE(0x22, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+# Path-guard IOCTLs — CTL_CODE(0x22, func, METHOD_BUFFERED, FILE_ANY_ACCESS)
+IOCTL_ANTIRANSOMWARE_ADD_PATH           = 0x222020   # func=0x808
+IOCTL_ANTIRANSOMWARE_REMOVE_PATH        = 0x222024   # func=0x809
+IOCTL_ANTIRANSOMWARE_CLEAR_PATHS        = 0x222028   # func=0x80A
+# Event drain IOCTL — func=0x80B
+IOCTL_ANTIRANSOMWARE_GET_EVENTS         = 0x22202C   # func=0x80B
 
 class KernelDriverManager:
     """Manages kernel-level minifilter driver for ransomware protection"""
     
     def __init__(self):
+        # service_name: the SCM service name (matches .inf and installed service)
+        self.service_name = "AntiRansomwareKernel"
+        # driver_name: the device symlink name for IOCTL communication
         self.driver_name = "AntiRansomwareFilter"
         self.driver_path = None
         self.service_handle = None
@@ -578,16 +587,52 @@ Instance1.Flags = 0x0
             self.logger.error(f"Driver installation failed: {e}")
             return False
     
+    def _ensure_service_config(self) -> None:
+        """Ensure the service has LoadOrderGroup and FltMgr dependency for minifilter loading."""
+        try:
+            subprocess.run(
+                ['sc', 'config', self.service_name,
+                 'group=', 'FSFilter Activity Monitor',
+                 'depend=', 'FltMgr'],
+                capture_output=True, text=True, check=False, timeout=10
+            )
+        except Exception:
+            pass
+        try:
+            # Ensure altitude/instance registry keys (FltMgr requires these)
+            svc_reg = 'SYSTEM\\CurrentControlSet\\Services\\' + self.service_name
+            inst_reg = svc_reg + r'\Instances'
+            existing_inst = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, inst_reg)
+            try:
+                winreg.QueryValueEx(existing_inst, 'DefaultInstance')
+            except FileNotFoundError:
+                # DefaultInstance missing — write it
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, inst_reg,
+                                    0, winreg.KEY_SET_VALUE | winreg.KEY_CREATE_SUB_KEY) as k:
+                    inst_name = self.service_name + ' Instance'
+                    winreg.SetValueEx(k, 'DefaultInstance', 0, winreg.REG_SZ, inst_name)
+                    sub_key = inst_reg + '' + inst_name
+                    with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, sub_key,
+                                            0, winreg.KEY_SET_VALUE | winreg.KEY_CREATE_SUB_KEY) as sk:
+                        winreg.SetValueEx(sk, 'Altitude', 0, winreg.REG_SZ, '365000')
+                        winreg.SetValueEx(sk, 'Flags', 0, winreg.REG_DWORD, 0)
+            existing_inst.Close()
+        except Exception as e:
+            self.logger.debug(f'altitude registry check: {e}')
+
     def start_driver(self) -> bool:
         """Start the minifilter driver"""
         if not self.check_admin_privileges():
             self.logger.error("Administrator privileges required")
             return False
             
+        # Ensure correct service config and altitude registry before starting
+        self._ensure_service_config()
+
         try:
             # Use sc start command
             result = subprocess.run(
-                ['sc', 'start', self.driver_name],
+                ['sc', 'start', self.service_name],
                 capture_output=True,
                 text=True,
                 check=False
@@ -596,11 +641,52 @@ Instance1.Flags = 0x0
             if result.returncode == 0:
                 self.logger.info("Driver started successfully")
                 return True
-            elif "already been started" in result.stderr:
+            elif 'already been started' in result.stdout or 'already been started' in result.stderr:
                 self.logger.info("Driver already running")
                 return True
+            elif 'RUNNING' in result.stdout:
+                self.logger.info("Driver is running")
+                return True
             else:
-                self.logger.error(f"Failed to start driver: {result.stderr}")
+                combined = result.stdout + result.stderr
+                # Error 183 = device object already exists in kernel from a prior partial load.
+                # Try opening the device — if it succeeds the driver is already loaded.
+                if '183' in combined:
+                    self.logger.info(
+                        "sc start returned error 183 (device already exists) — "
+                        "checking if driver is already loaded..."
+                    )
+                    if self.open_device():
+                        self.logger.info("Driver device accessible — treating as running")
+                        return True
+                    else:
+                        self.logger.error(
+                            "Error 183 and device not accessible — "
+                            "a reboot is required to clear the stale device object"
+                        )
+                        return False
+                # Error 577 = digital signature verification failed (test-signed driver, no test mode)
+                if '577' in combined or 'digital' in combined.lower() or 'signature' in combined.lower():
+                    self.logger.warning(
+                        "Driver has a test certificate. Enabling test signing mode (reboot required)."
+                    )
+                    ts_result = subprocess.run(
+                        ['bcdedit', '/set', 'testsigning', 'on'],
+                        capture_output=True, text=True, check=False
+                    )
+                    if ts_result.returncode == 0:
+                        self.logger.info(
+                            "Test signing enabled. Please reboot and restart the application "
+                            "to activate kernel-level protection."
+                        )
+                    else:
+                        self.logger.error(
+                            f"Could not enable test signing: {ts_result.stdout.strip()} {ts_result.stderr.strip()}"
+                        )
+                    return False
+                self.logger.error(
+                    f"Failed to start driver: rc={result.returncode} {result.stdout.strip()} {result.stderr.strip()}"
+                )
                 return False
                 
         except Exception as e:
@@ -611,7 +697,7 @@ Instance1.Flags = 0x0
         """Stop the minifilter driver"""
         try:
             result = subprocess.run(
-                ['sc', 'stop', self.driver_name],
+                ['sc', 'stop', self.service_name],
                 capture_output=True,
                 text=True,
                 check=False
@@ -640,7 +726,7 @@ Instance1.Flags = 0x0
             
             # Delete service
             result = subprocess.run(
-                ['sc', 'delete', self.driver_name],
+                ['sc', 'delete', self.service_name],
                 capture_output=True,
                 text=True,
                 check=False
@@ -683,15 +769,15 @@ Instance1.Flags = 0x0
             self.logger.error(f"Device communication failed: {e}")
             return False
             
-    def send_ioctl(self, ioctl_code: int, input_data: bytes = b'') -> Optional[bytes]:
+    def send_ioctl(self, ioctl_code: int, input_data: bytes = b'', out_size: int = 1024) -> Optional[bytes]:
         """Send IOCTL command to the driver"""
         if not self.device_handle or self.device_handle == -1:
             self.logger.error("Device not open")
             return None
-            
+
         try:
             bytes_returned = ctypes.wintypes.DWORD()
-            output_buffer = ctypes.create_string_buffer(1024)
+            output_buffer = ctypes.create_string_buffer(out_size)
             
             result = ctypes.windll.kernel32.DeviceIoControl(
                 self.device_handle,
@@ -718,7 +804,7 @@ Instance1.Flags = 0x0
         """Check if the driver is currently running"""
         try:
             result = subprocess.run(
-                ['sc', 'query', self.driver_name],
+                ['sc', 'query', self.service_name],
                 capture_output=True,
                 text=True,
                 check=False
@@ -743,7 +829,7 @@ Instance1.Flags = 0x0
         # Check if service exists
         try:
             result = subprocess.run(
-                ['sc', 'query', self.driver_name],
+                ['sc', 'query', self.service_name],
                 capture_output=True,
                 text=True,
                 check=False
@@ -766,16 +852,15 @@ Instance1.Flags = 0x0
         return status
         
     def _check_test_signing(self) -> bool:
-        """Check if test signing is enabled"""
+        """Check if test signing is enabled on the current OS boot entry"""
         try:
+            # bcdedit (no args) shows all entries including current OS entry
             result = subprocess.run(
-                ['bcdedit', '/enum', 'bootmgr'],
-                capture_output=True,
-                text=True,
-                check=False
+                ['bcdedit'],
+                capture_output=True, text=True, check=False
             )
             return 'testsigning' in result.stdout.lower() and 'yes' in result.stdout.lower()
-        except:
+        except Exception:
             return False
 
 def main():

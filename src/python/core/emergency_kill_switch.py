@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -32,21 +33,30 @@ try:
     HAS_TOKEN_GATE = True
 except ImportError:
     HAS_TOKEN_GATE = False
-    print("⚠️ Token-gated access not available")
+    try:
+        print("Token-gated access not available")
+    except Exception:
+        pass
 
 try:
     from security_event_logger import SecurityEventLogger
     HAS_LOGGER = True
 except ImportError:
     HAS_LOGGER = False
-    print("⚠️ Security event logger not available")
+    try:
+        print("Security event logger not available")
+    except Exception:
+        pass
 
 try:
     from email_alerting import EmailAlertingSystem
     HAS_EMAIL = True
 except ImportError:
     HAS_EMAIL = False
-    print("⚠️ Email alerting not available")
+    try:
+        print("Email alerting not available")
+    except Exception:
+        pass
 
 
 class EmergencyKillSwitch:
@@ -61,15 +71,31 @@ class EmergencyKillSwitch:
     - Cryptographically signed event logging
     - Multiple trigger methods
     """
+
+    @staticmethod
+    def _resolve_config_path(config_file: Optional[Path], filename: str) -> Path:
+        if config_file is not None:
+            return Path(config_file)
+
+        candidates = [
+            Path.home() / "AppData" / "Local" / "AntiRansomware" / filename,
+            Path.cwd() / "config" / filename,
+            Path(tempfile.gettempdir()) / "AntiRansomware" / filename,
+        ]
+
+        for candidate in candidates:
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                return candidate
+            except (PermissionError, FileExistsError, OSError):
+                continue
+
+        return Path(tempfile.gettempdir()) / filename
     
     def __init__(self, config_file: Optional[Path] = None):
         """Initialize emergency kill switch"""
-        
-        if config_file is None:
-            config_file = Path.home() / "AppData" / "Local" / "AntiRansomware" / "killswitch_config.json"
-        
-        self.config_file = Path(config_file)
-        self.config_file.parent.mkdir(parents=True, exist_ok=True)
+
+        self.config_file = self._resolve_config_path(config_file, "killswitch_config.json")
         
         self.lockdown_file = Path(os.getenv('PROGRAMDATA', 'C:\\ProgramData')) / 'AntiRansomware' / 'EMERGENCY_LOCKDOWN'
         self.lockdown_active = False
@@ -108,6 +134,10 @@ class EmergencyKillSwitch:
                 with self.config_file.open('r') as f:
                     user_config = json.load(f)
                     default_config.update(user_config)
+            except PermissionError:
+                import tempfile as _tf
+                self.config_file = Path(_tf.gettempdir()) / 'AntiRansomware' / self.config_file.name
+                self.config_file.parent.mkdir(parents=True, exist_ok=True)
             except Exception as e:
                 print(f"⚠️ Config load failed: {e}")
         

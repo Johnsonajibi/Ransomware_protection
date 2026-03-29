@@ -6,6 +6,7 @@ Interfaces between user-mode anti-ransomware application and kernel driver
 
 import os
 import sys
+import struct
 import ctypes
 import ctypes.wintypes
 import logging
@@ -18,10 +19,14 @@ from enum import Enum
 # Import the kernel driver manager
 try:
     from kernel_driver_manager import (
-        KernelDriverManager, 
-        IOCTL_ANTIRANSOMWARE_SET_PROTECTION, 
+        KernelDriverManager,
+        IOCTL_ANTIRANSOMWARE_SET_PROTECTION,
         IOCTL_ANTIRANSOMWARE_GET_STATUS,
-        IOCTL_ANTIRANSOMWARE_ADD_EXCLUSION
+        IOCTL_ANTIRANSOMWARE_ADD_EXCLUSION,
+        IOCTL_ANTIRANSOMWARE_ADD_PATH,
+        IOCTL_ANTIRANSOMWARE_REMOVE_PATH,
+        IOCTL_ANTIRANSOMWARE_CLEAR_PATHS,
+        IOCTL_ANTIRANSOMWARE_GET_EVENTS,
     )
 except ImportError:
     print("Error: kernel_driver_manager.py not found")
@@ -54,7 +59,8 @@ class KernelProtectionInterface:
         self.monitoring_thread = None
         self.monitoring_active = False
         self._status = KernelStatus()
-        
+        self._get_events_supported = None  # None=untested, True=works, False=not supported
+
     def _setup_logging(self) -> logging.Logger:
         """Setup logging for kernel interface"""
         logger = logging.getLogger('KernelInterface')
@@ -136,8 +142,8 @@ class KernelProtectionInterface:
                 if not self.initialize():
                     return False
             
-            # Send protection enable command to kernel
-            protection_data = bytes([level.value])
+            # Send protection enable command to kernel — driver expects ULONG (4 bytes, little-endian)
+            protection_data = struct.pack('<I', level.value)
             result = self.driver_manager.send_ioctl(IOCTL_ANTIRANSOMWARE_SET_PROTECTION, protection_data)
             
             if result is not None:
@@ -168,8 +174,8 @@ class KernelProtectionInterface:
             if not self._status.driver_loaded:
                 return True  # Already disabled
             
-            # Send protection disable command to kernel
-            protection_data = bytes([ProtectionLevel.DISABLED.value])
+            # Send protection disable command to kernel — driver expects ULONG (4 bytes, little-endian)
+            protection_data = struct.pack('<I', ProtectionLevel.DISABLED.value)
             result = self.driver_manager.send_ioctl(IOCTL_ANTIRANSOMWARE_SET_PROTECTION, protection_data)
             
             if result is not None:
@@ -193,6 +199,114 @@ class KernelProtectionInterface:
             self.logger.error(f"Protection disable failed: {e}")
             return False
     
+    def add_protected_path(self, path: str) -> bool:
+        """Register a directory with the kernel path-guard.
+        The driver will block ALL I/O to files under this path
+        from any non-whitelisted process."""
+        try:
+            # Convert Win32 path to NT device path that the kernel sees
+            # e.g. C:\Users\... -> \Device\HarddiskVolume3\Users\...
+            import ctypes
+            nt_path_buf = ctypes.create_unicode_buffer(1024)
+            ret = ctypes.windll.kernel32.GetVolumePathNameW(path, nt_path_buf, 1024)
+            if ret:
+                # Build NT path: replace drive letter with \Device\HarddiskVolumeN
+                volume = nt_path_buf.value          # e.g. "C:\" (includes trailing slash)
+                nt_vol_buf = ctypes.create_unicode_buffer(1024)
+                ctypes.windll.kernel32.QueryDosDeviceW(
+                    volume.rstrip('\\'), nt_vol_buf, 1024)
+                nt_volume = nt_vol_buf.value        # e.g. \Device\HarddiskVolume3
+                # path[len(volume):] gives the part after "C:\" e.g. "Users\ajibi\..."
+                norm_path = path.replace('/', '\\')
+                relative = norm_path[len(volume):].strip('\\')
+                nt_path = nt_volume + '\\' + relative if relative else nt_volume
+            else:
+                # Fallback: send the Win32 path; driver may or may not match
+                nt_path = path
+
+            path_bytes = nt_path.encode('utf-16-le')
+            result = self.driver_manager.send_ioctl(IOCTL_ANTIRANSOMWARE_ADD_PATH, path_bytes)
+            if result is not None:
+                self.logger.info(f"Path-guard registered: {nt_path}")
+                return True
+            self.logger.error(f"Path-guard IOCTL failed for: {path}")
+            return False
+        except Exception as e:
+            self.logger.error(f"add_protected_path failed: {e}")
+            return False
+
+    def clear_protected_paths(self) -> bool:
+        """Remove all path-guard entries from the kernel."""
+        try:
+            result = self.driver_manager.send_ioctl(IOCTL_ANTIRANSOMWARE_CLEAR_PATHS)
+            return result is not None
+        except Exception as e:
+            self.logger.error(f"clear_protected_paths failed: {e}")
+            return False
+
+    def drain_events(self):
+        """Drain the kernel blocked-access ring buffer.
+
+        Returns a list of dicts: [{'pid': int, 'path': str}, ...]
+        Returns an empty list when no events are waiting or driver unavailable.
+        Each call consumes the returned events (they won't appear again).
+        """
+        if not self._status.driver_loaded:
+            return []
+
+        # Once we know this driver build doesn't support GET_EVENTS, stop trying
+        if self._get_events_supported is False:
+            return []
+
+        # BLOCKED_EVENT = ULONG ProcessId (4) + WCHAR Path[200] (400) = 404 bytes
+        EVENT_SIZE = 4 + 200 * 2   # 404 bytes per event
+        MAX_EVENTS = 64
+        # output: 4-byte count + up to 64 events
+        out_size = 4 + MAX_EVENTS * EVENT_SIZE  # 25860 bytes
+
+        try:
+            # Silence the KernelDriver logger temporarily so a missing IOCTL
+            # handler in an older driver build doesn't flood the console.
+            km_logger = self.driver_manager.logger
+            orig_level = km_logger.level
+            km_logger.setLevel(logging.CRITICAL)
+            data = self.driver_manager.send_ioctl(
+                IOCTL_ANTIRANSOMWARE_GET_EVENTS, b'', out_size=out_size)
+            km_logger.setLevel(orig_level)
+
+            if data is None:
+                # IOCTL not recognised by this driver build — stop polling
+                self._get_events_supported = False
+                self.logger.info(
+                    "IOCTL_AR_GET_EVENTS not supported by running driver — "
+                    "rebuild driver to enable real-time access-denial events")
+                return []
+
+            if len(data) < 4:
+                return []
+
+            count = struct.unpack_from('<I', data, 0)[0]
+            if count == 0:
+                return []
+
+            events = []
+            for i in range(count):
+                offset = 4 + i * EVENT_SIZE
+                if offset + EVENT_SIZE > len(data):
+                    break
+                pid = struct.unpack_from('<I', data, offset)[0]
+                path_bytes = data[offset + 4: offset + EVENT_SIZE]
+                try:
+                    path = path_bytes.decode('utf-16-le').rstrip('\x00')
+                except Exception:
+                    path = ''
+                events.append({'pid': pid, 'path': path})
+
+            return events
+        except Exception as e:
+            self.logger.error(f"drain_events failed: {e}")
+            return []
+
     def get_status(self) -> KernelStatus:
         """Get current kernel protection status"""
         try:
@@ -264,7 +378,7 @@ class KernelProtectionInterface:
                         })
                 
                 last_status = current_status
-                time.sleep(1.0)  # Check every second
+                time.sleep(5.0)  # Check every 5 seconds
                 
             except Exception as e:
                 self.logger.error(f"Monitoring loop error: {e}")

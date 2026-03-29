@@ -20,6 +20,8 @@ import os
 import smtplib
 import time
 import json
+import sys
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -32,6 +34,20 @@ try:
     HAS_LOGGER = True
 except ImportError:
     HAS_LOGGER = False
+
+
+def _console_print(*args, sep: str = " ", end: str = "\n"):
+    """Print without crashing on Windows consoles that can't encode Unicode."""
+
+    text = sep.join(str(arg) for arg in args) + end
+    stream = sys.stdout
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+
+    try:
+        stream.write(text)
+    except UnicodeEncodeError:
+        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        stream.write(safe_text)
 
 
 class EmailAlertingSystem:
@@ -74,15 +90,31 @@ class EmailAlertingSystem:
             'auth_required': True
         }
     }
+
+    @staticmethod
+    def _resolve_config_path(config_file: Optional[Path], filename: str) -> Path:
+        if config_file is not None:
+            return Path(config_file)
+
+        candidates = [
+            Path.home() / "AppData" / "Local" / "AntiRansomware" / filename,
+            Path.cwd() / "config" / filename,
+            Path(tempfile.gettempdir()) / "AntiRansomware" / filename,
+        ]
+
+        for candidate in candidates:
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                return candidate
+            except (PermissionError, FileExistsError, OSError):
+                continue
+
+        return Path(tempfile.gettempdir()) / filename
     
     def __init__(self, config_file: Optional[Path] = None):
         """Initialize email alerting system"""
-        
-        if config_file is None:
-            config_file = Path.home() / "AppData" / "Local" / "AntiRansomware" / "email_config.json"
-        
-        self.config_file = Path(config_file)
-        self.config_file.parent.mkdir(parents=True, exist_ok=True)
+
+        self.config_file = self._resolve_config_path(config_file, "email_config.json")
         
         # Load configuration
         self.config = self._load_config()
@@ -126,21 +158,40 @@ class EmailAlertingSystem:
             'include_system_info': True
         }
         
-        if self.config_file.exists():
+        try:
+            config_exists = self.config_file.exists()
+        except (PermissionError, OSError):
+            self.config_file = self._resolve_config_path(Path.cwd() / "config" / "email_config.json", "email_config.json")
+            config_exists = False
+
+        if config_exists:
             try:
                 with self.config_file.open('r') as f:
                     user_config = json.load(f)
                     default_config.update(user_config)
+            except PermissionError:
+                import tempfile as _tf
+                self.config_file = Path(_tf.gettempdir()) / 'AntiRansomware' / 'email_config.json'
+                self.config_file.parent.mkdir(parents=True, exist_ok=True)
             except Exception as e:
-                print(f"⚠️ Config load failed: {e}")
+                _console_print(f"⚠️ Config load failed: {e}")
         else:
             # Save default config
             try:
                 with self.config_file.open('w') as f:
                     json.dump(default_config, f, indent=2)
-                print(f"✓ Default config saved to {self.config_file}")
+                _console_print(f"✓ Default config saved to {self.config_file}")
+            except PermissionError:
+                import tempfile as _tf
+                self.config_file = Path(_tf.gettempdir()) / 'AntiRansomware' / 'email_config.json'
+                self.config_file.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with self.config_file.open('w') as _f:
+                        import json as _j; _j.dump(default_config, _f, indent=2)
+                except Exception:
+                    pass
             except Exception as e:
-                print(f"⚠️ Config save failed: {e}")
+                _console_print(f"⚠️ Config save failed: {e}")
         
         return default_config
     
@@ -166,7 +217,7 @@ class EmailAlertingSystem:
             with self.rate_limit_file.open('w') as f:
                 json.dump(self.alert_history, f)
         except Exception as e:
-            print(f"⚠️ Failed to save alert history: {e}")
+            _console_print(f"⚠️ Failed to save alert history: {e}")
     
     def _check_rate_limit(self, alert_type: str, severity: str) -> bool:
         """
@@ -204,12 +255,12 @@ class EmailAlertingSystem:
         
         # Check hourly limit
         if alerts_last_hour >= rate_config['max_emails_per_hour']:
-            print(f"⚠️ Rate limit: {alerts_last_hour} emails in last hour")
+            _console_print(f"⚠️ Rate limit: {alerts_last_hour} emails in last hour")
             return False
         
         # Check daily limit
         if alerts_last_day >= rate_config['max_emails_per_day']:
-            print(f"⚠️ Rate limit: {alerts_last_day} emails in last 24h")
+            _console_print(f"⚠️ Rate limit: {alerts_last_day} emails in last 24h")
             return False
         
         # Check cooldown for similar alerts
@@ -219,7 +270,7 @@ class EmailAlertingSystem:
                 time_since = now - alert['timestamp']
                 if time_since < cooldown:
                     remaining = int(cooldown - time_since)
-                    print(f"⚠️ Cooldown: {remaining}s remaining for {alert_type}")
+                    _console_print(f"⚠️ Cooldown: {remaining}s remaining for {alert_type}")
                     return False
                 break
         
@@ -336,12 +387,12 @@ class EmailAlertingSystem:
         
         # Check if alerting is enabled
         if not self.config['enabled']:
-            print("⚠️ Email alerting is disabled")
+            _console_print("⚠️ Email alerting is disabled")
             return False
         
         # Check if severity level should be alerted
         if not self.config['alert_levels'].get(severity, False):
-            print(f"⚠️ {severity} alerts are disabled")
+            _console_print(f"⚠️ {severity} alerts are disabled")
             return False
         
         # Check rate limits
@@ -374,9 +425,9 @@ class EmailAlertingSystem:
                         attachment = MIMEApplication(f.read(), Name=log_file.name)
                         attachment['Content-Disposition'] = f'attachment; filename="{log_file.name}"'
                         msg.attach(attachment)
-                    print(f"   ✓ Attached log file: {log_file.name}")
+                    _console_print(f"   ✓ Attached log file: {log_file.name}")
             except Exception as e:
-                print(f"   ⚠️ Failed to attach logs: {e}")
+                _console_print(f"   ⚠️ Failed to attach logs: {e}")
         
         # Send email
         try:
@@ -392,7 +443,7 @@ class EmailAlertingSystem:
                 use_tls = self.config['use_tls']
             
             # Connect to SMTP server
-            print(f"   Connecting to {smtp_server}:{smtp_port}...")
+            _console_print(f"   Connecting to {smtp_server}:{smtp_port}...")
             
             if use_tls:
                 server = smtplib.SMTP(smtp_server, smtp_port)
@@ -417,11 +468,11 @@ class EmailAlertingSystem:
             # Record alert
             self._record_alert(alert_type, severity)
             
-            print(f"✓ Alert email sent to {len(all_recipients)} recipients")
+            _console_print(f"✓ Alert email sent to {len(all_recipients)} recipients")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to send email: {e}")
+            _console_print(f"❌ Failed to send email: {e}")
             return False
 
 
@@ -440,28 +491,28 @@ def main():
     alerter = EmailAlertingSystem()
     
     if args.status:
-        print("\n" + "="*60)
-        print("Email Alerting System Status")
-        print("="*60)
-        print(f"Enabled: {alerter.config['enabled']}")
-        print(f"Provider: {alerter.config['provider']}")
-        print(f"From: {alerter.config['from_email']}")
-        print(f"Recipients: {', '.join(alerter.config['recipients']) if alerter.config['recipients'] else 'None'}")
-        print(f"Rate Limit: {alerter.config['rate_limit']['max_emails_per_hour']}/hour, {alerter.config['rate_limit']['max_emails_per_day']}/day")
-        print("\nAlert Levels:")
+        _console_print("\n" + "="*60)
+        _console_print("Email Alerting System Status")
+        _console_print("="*60)
+        _console_print(f"Enabled: {alerter.config['enabled']}")
+        _console_print(f"Provider: {alerter.config['provider']}")
+        _console_print(f"From: {alerter.config['from_email']}")
+        _console_print(f"Recipients: {', '.join(alerter.config['recipients']) if alerter.config['recipients'] else 'None'}")
+        _console_print(f"Rate Limit: {alerter.config['rate_limit']['max_emails_per_hour']}/hour, {alerter.config['rate_limit']['max_emails_per_day']}/day")
+        _console_print("\nAlert Levels:")
         for level, enabled in alerter.config['alert_levels'].items():
             status = "✓" if enabled else "✗"
-            print(f"  {status} {level}")
-        print("="*60 + "\n")
+            _console_print(f"  {status} {level}")
+        _console_print("="*60 + "\n")
     
     elif args.configure:
-        print("\n" + "="*60)
-        print("Email Configuration Wizard")
-        print("="*60)
+        _console_print("\n" + "="*60)
+        _console_print("Email Configuration Wizard")
+        _console_print("="*60)
         
-        print("\nSelect email provider:")
+        _console_print("\nSelect email provider:")
         for i, provider in enumerate(EmailAlertingSystem.SMTP_PROVIDERS.keys(), 1):
-            print(f"  {i}. {provider}")
+            _console_print(f"  {i}. {provider}")
         
         provider_choice = input("\nProvider (1-4): ").strip()
         providers = list(EmailAlertingSystem.SMTP_PROVIDERS.keys())
@@ -472,7 +523,7 @@ def main():
         password = input("SMTP password (use app password for Gmail): ").strip()
         
         recipients = []
-        print("\nEnter recipient email addresses (one per line, empty line to finish):")
+        _console_print("\nEnter recipient email addresses (one per line, empty line to finish):")
         while True:
             recipient = input("  Recipient: ").strip()
             if not recipient:
@@ -493,12 +544,12 @@ def main():
         try:
             with alerter.config_file.open('w') as f:
                 json.dump(alerter.config, f, indent=2)
-            print("\n✓ Configuration saved")
+            _console_print("\n✓ Configuration saved")
         except Exception as e:
-            print(f"\n❌ Failed to save configuration: {e}")
+            _console_print(f"\n❌ Failed to save configuration: {e}")
     
     elif args.test:
-        print("\nSending test email...")
+        _console_print("\nSending test email...")
         
         success = alerter.send_alert(
             alert_type='TEST_ALERT',
@@ -512,9 +563,9 @@ def main():
         )
         
         if success:
-            print("✓ Test email sent successfully")
+            _console_print("✓ Test email sent successfully")
         else:
-            print("❌ Test email failed")
+            _console_print("❌ Test email failed")
     
     else:
         parser.print_help()

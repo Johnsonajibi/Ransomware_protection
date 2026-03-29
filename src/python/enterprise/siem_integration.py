@@ -152,6 +152,10 @@ class SIEMIntegration:
                 with self.config_file.open('r') as f:
                     user_config = json.load(f)
                     default_config.update(user_config)
+            except PermissionError:
+                import tempfile as _tf
+                self.config_file = Path(_tf.gettempdir()) / 'AntiRansomware' / 'siem_config.json'
+                self.config_file.parent.mkdir(parents=True, exist_ok=True)
             except Exception as e:
                 print(f"⚠️ Config load failed: {e}")
         else:
@@ -160,6 +164,15 @@ class SIEMIntegration:
                 with self.config_file.open('w') as f:
                     json.dump(default_config, f, indent=2)
                 print(f"✓ Default config saved to {self.config_file}")
+            except PermissionError:
+                import tempfile as _tf
+                self.config_file = Path(_tf.gettempdir()) / 'AntiRansomware' / 'siem_config.json'
+                self.config_file.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with self.config_file.open('w') as _f:
+                        import json as _j; _j.dump(default_config, _f, indent=2)
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"⚠️ Config save failed: {e}")
         

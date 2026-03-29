@@ -30,7 +30,7 @@ try:
     from trifactor_auth_manager import TriFactorAuthManager, SecurityLevel
     HAS_TRIFACTOR = True
 except ImportError:
-    print("⚠️ Tri-factor authentication not available")
+    print(" Tri-factor authentication not available")
     HAS_TRIFACTOR = False
 
 # Import system health checker
@@ -38,7 +38,7 @@ try:
     from system_health_checker import SystemHealthChecker
     HAS_HEALTH_CHECKER = True
 except ImportError:
-    print("⚠️ System health checker not available")
+    print(" System health checker not available")
     HAS_HEALTH_CHECKER = False
 
 # Import security event logger
@@ -46,7 +46,7 @@ try:
     from security_event_logger import SecurityEventLogger
     HAS_LOGGER = True
 except ImportError:
-    print("⚠️ Security event logger not available")
+    print(" Security event logger not available")
     HAS_LOGGER = False
 
 
@@ -81,7 +81,7 @@ class TokenGatedAccessControl:
                 self.auth_manager = TriFactorAuthManager()
                 print("[OK] Tri-factor authentication initialized")
             except Exception as e:
-                print(f"⚠️ Tri-factor init failed: {e}")
+                print(f" Tri-factor init failed: {e}")
     
     def _load_protected_paths(self):
         """Load protected paths from config file"""
@@ -89,8 +89,12 @@ class TokenGatedAccessControl:
             if self.config_file.exists():
                 with open(self.config_file, 'r') as f:
                     self.protected_paths = json.load(f)
+        except PermissionError:
+            import tempfile as _tf
+            self.config_file = Path(_tf.gettempdir()) / 'AntiRansomware' / 'protected_paths.json'
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            print(f"⚠️ Could not load protected paths: {e}")
+            print(f" Could not load protected paths: {e}")
     
     def _save_protected_paths(self):
         """Save protected paths to config file"""
@@ -98,7 +102,7 @@ class TokenGatedAccessControl:
             with open(self.config_file, 'w') as f:
                 json.dump(self.protected_paths, f, indent=2)
         except Exception as e:
-            print(f"⚠️ Could not save protected paths: {e}")
+            print(f" Could not save protected paths: {e}")
     
     def add_protected_path(self, path: str, require_tpm: bool = True, 
                           require_fingerprint: bool = True, 
@@ -112,7 +116,7 @@ class TokenGatedAccessControl:
         path_obj = Path(path)
         
         if not path_obj.exists():
-            print(f"❌ Path does not exist: {path}")
+            print(f" Path does not exist: {path}")
             return False
         
         # Store requirements
@@ -132,10 +136,10 @@ class TokenGatedAccessControl:
         if success:
             # Save to persistent config
             self._save_protected_paths()
-            print(f"✅ Protected: {path}")
+            print(f" Protected: {path}")
             print(f"   Requirements: TPM={require_tpm}, Fingerprint={require_fingerprint}, USB={require_usb}")
         else:
-            print(f"❌ Failed to protect: {path}")
+            print(f" Failed to protect: {path}")
         
         return success
     
@@ -151,7 +155,7 @@ class TokenGatedAccessControl:
             )
             
             if result.returncode != 0:
-                print(f"⚠️ icacls warning: {result.stderr}")
+                print(f" icacls warning: {result.stderr}")
             
             # Method 2: Deny SYSTEM (even admin processes)
             subprocess.run(
@@ -174,11 +178,11 @@ class TokenGatedAccessControl:
                 shell=True
             )
             
-            print(f"  🔒 File access blocked: {Path(file_path).name}")
+            print(f"   File access blocked: {Path(file_path).name}")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to block file access: {e}")
+            print(f" Failed to block file access: {e}")
             return False
     
     def _block_folder_access(self, folder_path: str) -> bool:
@@ -187,7 +191,7 @@ class TokenGatedAccessControl:
             folder_obj = Path(folder_path)
             
             # Block folder itself
-            print(f"  🔒 Blocking folder: {folder_obj.name}")
+            print(f"   Blocking folder: {folder_obj.name}")
             
             # Deny Everyone with inheritance
             subprocess.run(
@@ -224,11 +228,11 @@ class TokenGatedAccessControl:
                     self._block_file_access(str(file_path))
                     file_count += 1
             
-            print(f"  ✅ Blocked folder + {file_count} files")
+            print(f"   Blocked folder + {file_count} files")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to block folder access: {e}")
+            print(f" Failed to block folder access: {e}")
             return False
     
     def grant_access(self, path: str, token_data: Optional[bytes] = None) -> bool:
@@ -245,12 +249,12 @@ class TokenGatedAccessControl:
         path_str = str(Path(path))
         
         if path_str not in self.protected_paths:
-            print(f"⚠️ Path not protected: {path}")
+            print(f" Path not protected: {path}")
             return False
         
         # STEP 1: System Health Check (CRITICAL)
         if self.health_checker and HAS_HEALTH_CHECKER:
-            print("\n🔍 Performing system health check before granting access...")
+            print("\n Performing system health check before granting access...")
             
             if not self.health_checker.can_use_usb_token():
                 # Log the blocked attempt
@@ -259,17 +263,17 @@ class TokenGatedAccessControl:
                     device_id = usb_info['device_id'] if usb_info else 'UNKNOWN'
                     self.logger.log_usb_blocked(device_id, self.health_checker.threat_indicators)
                 
-                print("\n❌ ACCESS DENIED: System compromised - USB token blocked")
+                print("\n ACCESS DENIED: System compromised - USB token blocked")
                 print("   Complete remediation steps before attempting access")
                 return False
             
-            print("✓ System health check passed")
+            print(" System health check passed")
         
         requirements = self.protected_paths[path_str]
         
         # STEP 2: Validate token
         if not self._validate_token(token_data, requirements):
-            print("❌ Token validation failed - access denied")
+            print(" Token validation failed - access denied")
             
             # Log the failed attempt
             if self.logger:
@@ -286,9 +290,9 @@ class TokenGatedAccessControl:
         if self.backup:
             backup_path = self.backup.backup_before_access(path_str)
             if backup_path:
-                print(f"💾 Backup created: {backup_path}")
+                print(f" Backup created: {backup_path}")
             else:
-                print("⚠️ Backup could not be created (continuing)")
+                print(" Backup could not be created (continuing)")
 
         # STEP 3: Remove access restrictions
         if requirements['is_directory']:
@@ -297,22 +301,22 @@ class TokenGatedAccessControl:
             success = self._unblock_file_access(path_str)
         
         if success:
-            print(f"✅ Access granted: {path}")
+            print(f" Access granted: {path}")
         else:
-            print(f"❌ Failed to grant access: {path}")
+            print(f" Failed to grant access: {path}")
         
         return success
     
     def _validate_token(self, token_data: Optional[bytes], requirements: Dict) -> bool:
         """Validate token with tri-factor authentication"""
         if not HAS_TRIFACTOR or not self.auth_manager:
-            print("⚠️ Tri-factor authentication not available - using fallback")
+            print(" Tri-factor authentication not available - using fallback")
             return True  # Fallback for testing
         
         try:
             # If no token data provided, try to load from file
             if token_data is None:
-                print("\n🔑 Token validation required")
+                print("\n Token validation required")
                 print("   Checking for existing tokens...")
                 
                 # Try to find and verify token
@@ -328,7 +332,7 @@ class TokenGatedAccessControl:
                         print(f"   Using token: {token_file.name}")
             
             if token_data is None:
-                print("❌ No token found - generate token first")
+                print(" No token found - generate token first")
                 return False
             
             # Verify token
@@ -336,7 +340,7 @@ class TokenGatedAccessControl:
             verification = self.auth_manager.verify_service_token(token_data)
             
             if not verification['valid']:
-                print(f"❌ Token invalid: {verification.get('error', 'Unknown error')}")
+                print(f" Token invalid: {verification.get('error', 'Unknown error')}")
                 return False
             
             # Check security level
@@ -346,27 +350,27 @@ class TokenGatedAccessControl:
             # Check if meets requirements
             if requirements['require_tpm']:
                 if not verification.get('tpm_verified', False):
-                    print("❌ TPM verification required but not present")
+                    print(" TPM verification required but not present")
                     return False
-                print("   ✅ TPM verified")
+                print("    TPM verified")
             
             if requirements['require_fingerprint']:
                 if not verification.get('fingerprint_verified', False):
-                    print("❌ Device fingerprint required but not present")
+                    print(" Device fingerprint required but not present")
                     return False
-                print("   ✅ Device fingerprint verified")
+                print("    Device fingerprint verified")
             
             if requirements['require_usb']:
                 if not verification.get('usb_verified', False):
-                    print("❌ USB token required but not present")
+                    print(" USB token required but not present")
                     return False
-                print("   ✅ USB token verified")
+                print("    USB token verified")
             
-            print("✅ All authentication factors verified")
+            print(" All authentication factors verified")
             return True
             
         except Exception as e:
-            print(f"❌ Token validation error: {e}")
+            print(f" Token validation error: {e}")
             return False
     
     def _unblock_file_access(self, file_path: str) -> bool:
@@ -405,11 +409,11 @@ class TokenGatedAccessControl:
                 shell=True
             )
             
-            print(f"  🔓 File access restored: {Path(file_path).name}")
+            print(f"   File access restored: {Path(file_path).name}")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to restore file access: {e}")
+            print(f" Failed to restore file access: {e}")
             return False
     
     def _unblock_folder_access(self, folder_path: str) -> bool:
@@ -457,11 +461,11 @@ class TokenGatedAccessControl:
                     self._unblock_file_access(str(file_path))
                     file_count += 1
             
-            print(f"  ✅ Unblocked folder + {file_count} files")
+            print(f"   Unblocked folder + {file_count} files")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to restore folder access: {e}")
+            print(f" Failed to restore folder access: {e}")
             return False
     
     def list_protected_paths(self) -> List[str]:
@@ -473,7 +477,7 @@ class TokenGatedAccessControl:
         path_str = str(Path(path))
         
         if path_str not in self.protected_paths:
-            print(f"⚠️ Path not protected: {path}")
+            print(f" Path not protected: {path}")
             return False
         
         requirements = self.protected_paths[path_str]
@@ -487,7 +491,7 @@ class TokenGatedAccessControl:
         if success:
             del self.protected_paths[path_str]
             self._save_protected_paths()
-            print(f"✅ Protection removed: {path}")
+            print(f" Protection removed: {path}")
         
         return success
 
@@ -511,18 +515,18 @@ def main():
     if args.command == 'list':
         paths = controller.list_protected_paths()
         if paths:
-            print("\n🛡️ PROTECTED PATHS:")
+            print("\n PROTECTED PATHS:")
             print("="*60)
             for path in paths:
                 req = controller.protected_paths[path]
-                print(f"📂 {path}")
+                print(f" {path}")
                 print(f"   TPM: {req['require_tpm']}, Fingerprint: {req['require_fingerprint']}, USB: {req['require_usb']}")
         else:
             print("No protected paths")
     
     elif args.command == 'protect':
         if not args.path:
-            print("❌ Path required")
+            print(" Path required")
             return
         
         controller.add_protected_path(
@@ -534,14 +538,14 @@ def main():
     
     elif args.command == 'grant':
         if not args.path:
-            print("❌ Path required")
+            print(" Path required")
             return
         
         controller.grant_access(args.path)
     
     elif args.command == 'remove':
         if not args.path:
-            print("❌ Path required")
+            print(" Path required")
             return
         
         controller.remove_protection(args.path)

@@ -30,56 +30,56 @@ class FourLayerProtection:
     def apply_complete_protection(self, folder_path: str) -> bool:
         """Apply all 4 layers of protection to a folder"""
         try:
-            print(f"\n🛡️ APPLYING COMPLETE MULTI-LAYER PROTECTION TO: {folder_path}\n")
+            print(f"\n APPLYING COMPLETE MULTI-LAYER PROTECTION TO: {folder_path}\n")
             
             folder = Path(folder_path)
             if not folder.exists():
                 print(f"❌ Path does not exist: {folder_path}")
                 return False
             
-            # LAYER 1: Load Kernel Filter Driver (highest priority)
-            print("🔵 LAYER 1: Kernel-Level I/O Blocking (Windows Filter Driver)")
-            layer1_success = self._apply_kernel_driver_protection(folder_path)
-            if layer1_success:
-                print("   ✅ Kernel driver active - blocks all file I/O at kernel level")
-            else:
-                print("   ⚠️ Kernel driver not available (requires WDK compilation)")
-                print("      Fallback: Using additional OS-level protections")
-            
-            # LAYER 2: Enable Windows Controlled Folder Access
-            print("\n🟢 LAYER 2: OS-Level Blocking (Windows Controlled Folder Access)")
-            layer2_success = self._apply_controlled_folder_access(folder_path)
-            if layer2_success:
-                print("   ✅ Controlled Folder Access enabled - OS-level protection")
-            else:
-                print("   ⚠️ Controlled Folder Access configuration error")
-            
-            # LAYER 3: Strip NTFS Permissions and require token for access
-            print("\n🟡 LAYER 3: NTFS Permissions Stripping (Token-Based Access Only)")
-            layer3_success = self._strip_ntfs_permissions(folder_path)
-            if layer3_success:
-                print("   ✅ All file permissions removed - token required for access")
-            else:
-                print("   ⚠️ NTFS permission stripping incomplete")
-            
-            # LAYER 4: Encrypt all files and hide them
-            print("\n🟣 LAYER 4: File Encryption + Hide (Unreadable Without Decryption)")
+            # LAYER 4: Encrypt first — before anything locks the files
+            print(" LAYER 4: File Encryption + Hide (Unreadable Without Decryption)")
             layer4_success = self._encrypt_and_hide_files(folder_path)
             if layer4_success:
                 print("   ✅ All files encrypted and hidden - unreadable without decryption key")
             else:
-                print("   ⚠️ File encryption incomplete")
-            
+                print("   ⚠ File encryption incomplete")
+
+            # LAYER 3: Strip NTFS permissions after encryption
+            print("\n LAYER 3: NTFS Permissions Stripping (Token-Based Access Only)")
+            layer3_success = self._strip_ntfs_permissions(folder_path)
+            if layer3_success:
+                print("   ✅ All file permissions removed - token required for access")
+            else:
+                print("   ⚠ NTFS permission stripping incomplete")
+
+            # LAYER 1: Lock via kernel driver — after files are encrypted
+            print("\n LAYER 1: Kernel-Level I/O Blocking (Windows Filter Driver)")
+            layer1_success = self._apply_kernel_driver_protection(folder_path)
+            if layer1_success:
+                print("   ✅ Kernel driver active - blocks all file I/O at kernel level")
+            else:
+                print("   ⚠ Kernel driver not available (requires WDK compilation)")
+                print("      Fallback: Using additional OS-level protections")
+
+            # LAYER 2: Enable Windows Controlled Folder Access
+            print("\n LAYER 2: OS-Level Blocking (Windows Controlled Folder Access)")
+            layer2_success = self._apply_controlled_folder_access(folder_path)
+            if layer2_success:
+                print("   ✅ Controlled Folder Access enabled - OS-level protection")
+            else:
+                print("   ⚠ Controlled Folder Access configuration error")
+
             # Summary
             print("\n" + "="*70)
-            print("🛡️ PROTECTION STATUS SUMMARY")
+            print(" PROTECTION STATUS SUMMARY")
             print("="*70)
             print(f"Folder: {folder_path}")
-            print(f"Layer 1 (Kernel): {'✅ ACTIVE' if layer1_success else '⚠️ UNAVAILABLE'}")
-            print(f"Layer 2 (OS): {'✅ ACTIVE' if layer2_success else '⚠️ UNAVAILABLE'}")
-            print(f"Layer 3 (NTFS): {'✅ ACTIVE' if layer3_success else '⚠️ UNAVAILABLE'}")
-            print(f"Layer 4 (Encrypt): {'✅ ACTIVE' if layer4_success else '⚠️ UNAVAILABLE'}")
-            print("\n🔒 Files are now PROTECTED via:")
+            print(f"Layer 1 (Kernel): {'✅ ACTIVE' if layer1_success else '⚠ UNAVAILABLE'}")
+            print(f"Layer 2 (OS): {'✅ ACTIVE' if layer2_success else '⚠ UNAVAILABLE'}")
+            print(f"Layer 4 (Encrypt): {'✅ ACTIVE' if layer4_success else '⚠ UNAVAILABLE'}")
+            print(f"Layer 3 (NTFS): {'✅ ACTIVE' if layer3_success else '⚠ UNAVAILABLE'}")
+            print("\n Files are now PROTECTED via:")
             if layer1_success:
                 print("   • Kernel Filter Driver (I/O blocked before reaching filesystem)")
             if layer2_success:
@@ -88,52 +88,37 @@ class FourLayerProtection:
                 print("   • NTFS Permissions (all user access denied)")
             if layer4_success:
                 print("   • AES-256 Encryption (files unreadable)")
-            print("\n🔑 ACCESS REQUIREMENT: Valid USB token with matching device fingerprint")
+            print("\n ACCESS REQUIREMENT: Valid USB token with matching device fingerprint")
             print("="*70 + "\n")
             
             self.protected_paths.add(str(folder))
-            return layer3_success and layer4_success  # Require at least layers 3 and 4
+            # Layer 3 (NTFS deny) is the primary access-control gate.
+            # Layer 4 (encryption) may fail if files are already locked; do not block Layer 3.
+            return layer3_success
             
         except Exception as e:
             print(f"❌ Complete protection error: {e}")
             return False
     
     def _apply_kernel_driver_protection(self, folder_path: str) -> bool:
-        """Apply Layer 1: Kernel-Level File Blocking (Python implementation)"""
+        """Apply Layer 1: Kernel-Level File Blocking via compiled minifilter driver"""
         try:
-            # First try compiled kernel driver
-            try:
-                from kernel_driver_loader import load_antiransomware_driver, configure_kernel_protection, get_driver_status
-                
-                # Check if driver is already loaded
-                status = get_driver_status()
-                if status == "running":
-                    print(f"   ✓ Kernel driver (C/.sys) already running")
-                    configure_kernel_protection([folder_path])
-                    return True
-                elif status == "not_installed":
-                    # Try to load driver
-                    if load_antiransomware_driver():
-                        print(f"   ✓ Kernel driver (C/.sys) loaded successfully")
-                        configure_kernel_protection([folder_path])
-                        self.kernel_driver_loaded = True
-                        return True
-            except:
-                pass
-            
-            # Fallback to Python kernel-level blocker
-            print("   ⚠️  C kernel driver not available, using Python kernel-level blocker")
-            from kernel_level_blocker import start_kernel_level_protection
-            
-            start_kernel_level_protection([folder_path])
-            self.kernel_driver_loaded = True
-            return True
-                
-        except ImportError as e:
-            print(f"   ⚠️ Kernel-level blocking not available: {e}")
+            from kernel_protection_interface import KernelProtectionInterface, ProtectionLevel
+            if not hasattr(self, '_kernel_iface') or self._kernel_iface is None:
+                self._kernel_iface = KernelProtectionInterface()
+            if not self._kernel_iface._status.driver_loaded:
+                if not self._kernel_iface.initialize():
+                    print("   ⚠ Kernel driver could not be started")
+                    return False
+            ok = self._kernel_iface.add_protected_path(folder_path)
+            if ok:
+                self.kernel_driver_loaded = True
+            return ok
+        except ImportError:
+            print("   Kernel-level blocking not available (driver not compiled)")
             return False
         except Exception as e:
-            print(f"   ⚠️ Kernel-level error: {e}")
+            print(f"   Kernel-level error: {e}")
             return False
     
     def _apply_controlled_folder_access(self, folder_path: str) -> bool:
@@ -143,7 +128,7 @@ class FourLayerProtection:
             
             # Check if running as admin
             if not ctypes.windll.shell32.IsUserAnAdmin():
-                print("   ⚠️ Controlled Folder Access requires admin privileges")
+                print("   ⚠ Controlled Folder Access requires admin privileges")
                 return False
             
             # PowerShell command to enable Controlled Folder Access
@@ -165,83 +150,70 @@ Get-MpPreference | Select-Object -ExpandProperty EnableControlledFolderAccess
                 print(f"   ✓ Controlled Folder Access enabled for: {Path(folder_path).name}")
                 return True
             else:
-                print(f"   ⚠️ Controlled Folder Access setup failed")
+                print(f"   ⚠ Controlled Folder Access setup failed")
                 return False
                 
         except Exception as e:
-            print(f"   ⚠️ Controlled Folder Access error: {e}")
+            print(f"   ⚠ Controlled Folder Access error: {e}")
             return False
     
     def _strip_ntfs_permissions(self, folder_path: str) -> bool:
-        """Apply Layer 3: Strip NTFS permissions and deny all user access"""
+        """Apply Layer 3: Deny all user access via explicit icacls DENY ACEs.
+
+        Uses icacls so that:
+          - Inherited Allow ACEs from parent folders do NOT override the block.
+          - Even administrator users get Access Denied from Explorer / apps.
+          - Works with or without pywin32.
+        """
+        import subprocess, ctypes
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            print("   ⚠  NTFS deny requires admin privileges")
+            return False
+
         try:
-            import win32security
-            import ntsecuritycon as con
-            
-            folder = Path(folder_path)
-            files_modified = 0
-            
-            # Process all files
-            for file_path in folder.rglob('*'):
-                if not file_path.is_file():
-                    continue
-                
-                try:
-                    # Get current security descriptor
-                    sd = win32security.GetFileSecurity(
-                        str(file_path),
-                        win32security.DACL_SECURITY_INFORMATION
-                    )
-                    
-                    # Create new DACL - only SYSTEM has access
-                    new_dacl = win32security.ACL()
-                    
-                    # Add SYSTEM with full access
-                    system_sid = win32security.LookupAccountName(None, "SYSTEM")[0]
-                    new_dacl.AddAccessAllowedAce(win32security.ACL_REVISION, con.FILE_ALL_ACCESS, system_sid)
-                    
-                    # Remove all other access (implicitly deny)
-                    # Set the new DACL
-                    sd.SetSecurityDescriptorDacl(1, new_dacl, 0)
-                    
-                    # Apply security descriptor
-                    win32security.SetFileSecurity(
-                        str(file_path),
-                        win32security.DACL_SECURITY_INFORMATION,
-                        sd
-                    )
-                    
-                    files_modified += 1
-                    
-                except Exception:
-                    continue  # Skip files that can't be modified
-            
-            if files_modified > 0:
-                print(f"   ✓ Stripped permissions from {files_modified} files")
-                print(f"   ✓ Only SYSTEM has access - all users denied")
+            # Add an explicit DENY for Everyone.
+            # Explicit DENY takes precedence over both explicit and inherited ALLOW ACEs,
+            # so there is no need to remove inheritance separately.
+            r = subprocess.run(
+                ['icacls', folder_path, '/deny', 'Everyone:(OI)(CI)F', '/T', '/C', '/Q'],
+                capture_output=True, text=True, timeout=60
+            )
+            if r.returncode == 0:
+                print(f"   ✓ NTFS deny applied to {folder_path} (all users blocked)")
                 return True
             else:
-                print(f"   ⚠️ No files modified - requires admin privileges")
+                print(f"   ⚠  icacls deny failed: {r.stderr.strip()}")
                 return False
-                
-        except ImportError:
-            print("   ⚠️ pywin32 not available - cannot modify NTFS permissions")
-            print("      Install: pip install pywin32")
-            return False
         except Exception as e:
-            print(f"   ⚠️ NTFS permission error: {e}")
+            print(f"   ⚠  NTFS deny error: {e}")
             return False
     
     def _encrypt_and_hide_files(self, folder_path: str) -> bool:
         """Apply Layer 4: Encrypt all files and hide them"""
+        _SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '$RECYCLE.BIN', '.svn', '.hg', 'venv', '.venv'}
+        _MAX_DEPTH = 3
+
+        def _iter_files(root: Path, depth: int):
+            if depth > _MAX_DEPTH:
+                return
+            try:
+                for entry in root.iterdir():
+                    if entry.is_symlink():
+                        continue  # skip symlinks / junction points
+                    if entry.is_dir():
+                        if entry.name in _SKIP_DIRS or entry.name.startswith('.'):
+                            continue
+                        yield from _iter_files(entry, depth + 1)
+                    elif entry.is_file():
+                        yield entry
+            except PermissionError:
+                pass
+
         try:
             folder = Path(folder_path)
             encrypted_count = 0
-            
-            for file_path in folder.rglob('*'):
-                if not file_path.is_file():
-                    continue
-                
+
+            for file_path in _iter_files(folder, 0):
                 # Encrypt file (uses existing CryptographicProtection)
                 try:
                     from unified_antiransomware import CryptographicProtection
@@ -266,11 +238,11 @@ Get-MpPreference | Select-Object -ExpandProperty EnableControlledFolderAccess
                 print(f"   ✓ Encrypted and hidden {encrypted_count} files")
                 return True
             else:
-                print(f"   ✓ Encryption layer prepared (will encrypt on access)")
-                return True
+                print(f"   No files encrypted (folder may be empty or files already encrypted)")
+                return False
                 
         except Exception as e:
-            print(f"   ⚠️ Encryption error: {e}")
+            print(f"   ⚠ Encryption error: {e}")
             return False
     
     def remove_complete_protection(self, folder_path: str, token_required: bool = True) -> bool:
@@ -285,7 +257,7 @@ Get-MpPreference | Select-Object -ExpandProperty EnableControlledFolderAccess
             folder = Path(folder_path)
             
             # Layer 4: Decrypt files
-            print("🔓 Decrypting files...")
+            print(" Decrypting files...")
             for file_path in folder.rglob('*'):
                 if file_path.is_file():
                     try:
@@ -296,7 +268,7 @@ Get-MpPreference | Select-Object -ExpandProperty EnableControlledFolderAccess
                         pass
             
             # Layer 3: Restore NTFS permissions
-            print("🔓 Restoring NTFS permissions...")
+            print(" Restoring NTFS permissions...")
             try:
                 import win32security
                 import ntsecuritycon as con
@@ -338,9 +310,23 @@ Get-MpPreference | Select-Object -ExpandProperty EnableControlledFolderAccess
             # Layer 1: Unload kernel driver (if we loaded it)
             if self.kernel_driver_loaded:
                 try:
-                    from kernel_driver_loader import unload_antiransomware_driver
-                    unload_antiransomware_driver()
-                except:
+                    if hasattr(self, '_kernel_iface') and self._kernel_iface is not None:
+                        from kernel_protection_interface import KernelProtectionInterface
+                        from kernel_driver_manager import IOCTL_ANTIRANSOMWARE_REMOVE_PATH
+                        import ctypes
+                        nt_path_buf = ctypes.create_unicode_buffer(1024)
+                        if ctypes.windll.kernel32.GetVolumePathNameW(folder_path, nt_path_buf, 1024):
+                            volume = nt_path_buf.value
+                            nt_vol_buf = ctypes.create_unicode_buffer(1024)
+                            ctypes.windll.kernel32.QueryDosDeviceW(volume.rstrip(''), nt_vol_buf, 1024)
+                            nt_volume = nt_vol_buf.value
+                            relative = folder_path[len(volume):].strip('')
+                            nt_path = nt_volume + '' + relative if relative else nt_volume
+                        else:
+                            nt_path = folder_path
+                        path_bytes = nt_path.encode('utf-16-le')
+                        self._kernel_iface.driver_manager.send_ioctl(IOCTL_ANTIRANSOMWARE_REMOVE_PATH, path_bytes)
+                except Exception:
                     pass
             
             if str(folder) in self.protected_paths:

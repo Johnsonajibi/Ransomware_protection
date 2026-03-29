@@ -334,28 +334,43 @@ class MLRansomwareDetector:
         self.feature_extractor = FeatureExtractor()
         self.enabled = HAS_SKLEARN
         
-        # Load model if exists
+        # Load model if exists; suppress version warnings (load_model handles migration)
         if os.path.exists(model_path):
-            self.load_model(model_path)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.load_model(model_path)
     
     def load_model(self, model_path: str) -> bool:
-        """Load trained model"""
+        """Load trained model, migrating the pickle to the current sklearn version if needed."""
         try:
             if not HAS_SKLEARN:
                 logger.error("scikit-learn not available")
                 return False
-            
-            with open(model_path, 'rb') as f:
-                model_data = pickle.load(f)
-            
+
+            import warnings
+            from sklearn.exceptions import InconsistentVersionWarning
+
+            migrated = False
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", InconsistentVersionWarning)
+                with open(model_path, 'rb') as f:
+                    model_data = pickle.load(f)
+                if caught:
+                    migrated = True
+
             self.model = model_data['model']
             self.scaler = model_data['scaler']
-            
+
+            if migrated:
+                # Re-save immediately so future loads are clean
+                logger.info("sklearn version mismatch detected — re-saving model to upgrade pickle")
+                self.save_model(model_path)
+
             logger.info(f"Loaded ML model from {model_path}")
             logger.info(f"Model type: {type(self.model).__name__}")
-            
             return True
-            
+
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             return False

@@ -48,6 +48,16 @@
 #define IOCTL_AR_ISSUE_SERVICE_TOKEN CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_AR_REVOKE_SERVICE_TOKEN CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_AR_LIST_SERVICE_TOKENS CTL_CODE(FILE_DEVICE_UNKNOWN, 0x807, METHOD_BUFFERED, FILE_READ_ACCESS)
+// Path-guard IOCTLs
+#define IOCTL_AR_ADD_PROTECTED_PATH    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_AR_REMOVE_PROTECTED_PATH CTL_CODE(FILE_DEVICE_UNKNOWN, 0x809, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_AR_CLEAR_PROTECTED_PATHS CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80A, METHOD_BUFFERED, FILE_ANY_ACCESS)
+// Event drain IOCTL — drains the blocked-access ring buffer to user mode
+#define IOCTL_AR_GET_EVENTS            CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80B, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Path-guard constants
+#define MAX_PROTECTED_PATHS  32
+#define MAX_WPATH_BYTES      1024   // 512 wide chars
 
 // Protection levels
 enum ProtectionLevel {
@@ -65,6 +75,15 @@ typedef enum _THREAT_LEVEL {
     ThreatLevelHigh = 3,
     ThreatLevelCritical = 4
 } THREAT_LEVEL;
+
+// Blocked-access event record for the kernel→user ring buffer
+#define AR_EVENT_BUFFER_SIZE   64
+#define AR_EVENT_PATH_CHARS   200   // max wide chars captured per blocked path (null-terminated)
+
+typedef struct _BLOCKED_EVENT {
+    ULONG  ProcessId;
+    WCHAR  Path[AR_EVENT_PATH_CHARS];
+} BLOCKED_EVENT, *PBLOCKED_EVENT;
 
 // Protection statistics
 typedef struct _PROTECTION_STATISTICS {
@@ -110,6 +129,17 @@ FAST_MUTEX gStatisticsMutex;
 FAST_MUTEX gProcessListMutex;
 LIST_ENTRY gProtectedProcessList;
 
+// Path-guard globals
+UNICODE_STRING gProtectedPaths[MAX_PROTECTED_PATHS];
+ULONG          gProtectedPathCount = 0;
+FAST_MUTEX     gPathListMutex;
+
+// Blocked-access event ring buffer (kernel -> user)
+BLOCKED_EVENT  gEventBuffer[AR_EVENT_BUFFER_SIZE];
+volatile LONG  gEventHead  = 0;  // index of the oldest unread event
+volatile LONG  gEventCount = 0;  // number of unread events in buffer
+FAST_MUTEX     gEventMutex;
+
 // Known ransomware extensions
 const PWCHAR RansomwareExtensions[] = {
     L".locked", L".encrypted", L".crypto", L".crypt", L".encrypt",
@@ -151,6 +181,7 @@ NTSTATUS AntiRansomwareMessage(_In_opt_ PVOID ConnectionCookie, _In_reads_bytes_
 // Utility functions
 BOOLEAN IsRansomwareExtension(_In_ PUNICODE_STRING FileName);
 BOOLEAN IsSuspiciousProcess(_In_ PCWSTR ProcessName);
+BOOLEAN IsProtectedPath(_In_ PUNICODE_STRING FilePath);
 THREAT_LEVEL AnalyzeThreatLevel(_In_ PFILE_OPERATION_CONTEXT Context);
 NTSTATUS GetProcessName(_In_ HANDLE ProcessId, _Out_ PWCHAR ProcessName, _In_ ULONG BufferSize);
 BOOLEAN IsProcessWhitelisted(_In_ HANDLE ProcessId);
@@ -239,8 +270,15 @@ DriverEntry (
     //
     ExInitializeFastMutex(&gStatisticsMutex);
     ExInitializeFastMutex(&gProcessListMutex);
+    ExInitializeFastMutex(&gPathListMutex);
+    ExInitializeFastMutex(&gEventMutex);
     InitializeListHead(&gProtectedProcessList);
     RtlZeroMemory(&gStatistics, sizeof(PROTECTION_STATISTICS));
+    RtlZeroMemory(gProtectedPaths, sizeof(gProtectedPaths));
+    RtlZeroMemory(gEventBuffer, sizeof(gEventBuffer));
+    gProtectedPathCount = 0;
+    gEventHead  = 0;
+    gEventCount = 0;
 
     //
     // Create control device for communication with user-mode
@@ -320,14 +358,38 @@ AntiRansomwareUnload (
     _In_ FLT_FILTER_UNLOAD_FLAGS Flags
     )
 {
-    UNREFERENCED_PARAMETER(Flags);
-
     PAGED_CODE();
 
     PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
                  ("AntiRansomware!AntiRansomwareUnload: Entered\n"));
 
+    //
+    // Deny voluntary unload (e.g. fltMC unload, sc stop).
+    // Only allow mandatory unload triggered by the OS at shutdown.
+    //
+    if (!(Flags & FLTFL_FILTER_UNLOAD_MANDATORY)) {
+        PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
+                     ("AntiRansomware!AntiRansomwareUnload: Voluntary unload DENIED\n"));
+        return STATUS_ACCESS_DENIED;
+    }
+
     gProtectionLevel = ProtectionDisabled;
+
+    //
+    // Free protected path buffers
+    //
+    {
+        ULONG i;
+        ExAcquireFastMutex(&gPathListMutex);
+        for (i = 0; i < gProtectedPathCount; i++) {
+            if (gProtectedPaths[i].Buffer != NULL) {
+                ExFreePoolWithTag(gProtectedPaths[i].Buffer, ANTIRANSOMWARE_TAG);
+                gProtectedPaths[i].Buffer = NULL;
+            }
+        }
+        gProtectedPathCount = 0;
+        ExReleaseFastMutex(&gPathListMutex);
+    }
 
     //
     // Close communication port
@@ -496,6 +558,29 @@ AntiRansomwarePreCreate (
             PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
                          ("AntiRansomware!AntiRansomwarePreCreate: Blocking operation for %wZ\n",
                           &nameInfo->Name));
+
+            // Push event into ring buffer so user mode can poll it
+            {
+                ULONG slot;
+                ExAcquireFastMutex(&gEventMutex);
+                if (gEventCount < AR_EVENT_BUFFER_SIZE) {
+                    slot = (ULONG)((gEventHead + gEventCount) % AR_EVENT_BUFFER_SIZE);
+                    gEventCount++;
+                } else {
+                    // Buffer full: overwrite oldest, advance head
+                    slot = (ULONG)gEventHead;
+                    gEventHead = (gEventHead + 1) % AR_EVENT_BUFFER_SIZE;
+                }
+                gEventBuffer[slot].ProcessId = (ULONG)(ULONG_PTR)PsGetCurrentProcessId();
+                RtlZeroMemory(gEventBuffer[slot].Path, sizeof(gEventBuffer[slot].Path));
+                if (nameInfo->Name.Length > 0) {
+                    ULONG copyBytes = nameInfo->Name.Length;
+                    if (copyBytes > (AR_EVENT_PATH_CHARS - 1) * sizeof(WCHAR))
+                        copyBytes = (AR_EVENT_PATH_CHARS - 1) * sizeof(WCHAR);
+                    RtlCopyMemory(gEventBuffer[slot].Path, nameInfo->Name.Buffer, copyBytes);
+                }
+                ExReleaseFastMutex(&gEventMutex);
+            }
 
             FltReleaseFileNameInformation(nameInfo);
             Data->IoStatus.Status = STATUS_ACCESS_DENIED;
@@ -897,6 +982,13 @@ AnalyzeThreatLevel (
     THREAT_LEVEL level = ThreatLevelNone;
 
     //
+    // PATH GUARD: block all I/O to explicitly protected directories
+    //
+    if (IsProtectedPath(&Context->FileName)) {
+        level = ThreatLevelCritical;
+    }
+
+    //
     // Check for ransomware extension
     //
     if (IsRansomwareExtension(&Context->FileName)) {
@@ -922,13 +1014,59 @@ AnalyzeThreatLevel (
     }
 
     //
-    // Check if process is whitelisted
+    // Check if process is whitelisted — overrides path-guard for the app itself
     //
     if (IsProcessWhitelisted(Context->ProcessId)) {
         level = ThreatLevelNone;
     }
 
     return level;
+}
+
+BOOLEAN
+IsProtectedPath (
+    _In_ PUNICODE_STRING FilePath
+    )
+/*
+ * Returns TRUE if FilePath is inside any registered protected directory.
+ * Comparison is case-insensitive and prefix-based, e.g.:
+ *   protected = \Device\HarddiskVolume3\Users\...\TestLogging
+ *   file      = \Device\HarddiskVolume3\Users\...\TestLogging\sample1.txt  → TRUE
+ */
+{
+    ULONG i;
+    BOOLEAN found = FALSE;
+
+    if (!FilePath || FilePath->Length == 0) {
+        return FALSE;
+    }
+
+    ExAcquireFastMutex(&gPathListMutex);
+
+    for (i = 0; i < gProtectedPathCount; i++) {
+        if (gProtectedPaths[i].Buffer == NULL || gProtectedPaths[i].Length == 0) {
+            continue;
+        }
+        //
+        // File must start with the protected path prefix
+        //
+        if (FilePath->Length >= gProtectedPaths[i].Length) {
+            if (RtlPrefixUnicodeString(&gProtectedPaths[i], FilePath, TRUE)) {
+                //
+                // Ensure we matched at a path boundary (not a partial name)
+                //
+                USHORT nextCharOffset = gProtectedPaths[i].Length / sizeof(WCHAR);
+                if (FilePath->Length == gProtectedPaths[i].Length ||
+                    FilePath->Buffer[nextCharOffset] == L'\\') {
+                    found = TRUE;
+                    break;
+                }
+            }
+        }
+    }
+
+    ExReleaseFastMutex(&gPathListMutex);
+    return found;
 }
 
 NTSTATUS
@@ -1148,11 +1286,128 @@ HandleDeviceControl (
                     status = STATUS_SUCCESS;
                     break;
 
+                case IOCTL_AR_ADD_PROTECTED_PATH:
+                    //
+                    // Input: NT device path as wide-char string (no null terminator required)
+                    // e.g. \Device\HarddiskVolume3\Users\ajibi\Desktop\TestLogging
+                    //
+                    if (inputBufferLength > 0 && inputBufferLength <= MAX_WPATH_BYTES) {
+                        ExAcquireFastMutex(&gPathListMutex);
+                        if (gProtectedPathCount < MAX_PROTECTED_PATHS) {
+                            PWCHAR buf = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool,
+                                                                       inputBufferLength,
+                                                                       ANTIRANSOMWARE_TAG);
+                            if (buf != NULL) {
+                                RtlCopyMemory(buf, inputBuffer, inputBufferLength);
+                                gProtectedPaths[gProtectedPathCount].Buffer      = buf;
+                                gProtectedPaths[gProtectedPathCount].Length       = (USHORT)inputBufferLength;
+                                gProtectedPaths[gProtectedPathCount].MaximumLength= (USHORT)inputBufferLength;
+                                gProtectedPathCount++;
+                                PT_DBG_PRINT(PTDBG_TRACE_ROUTINES,
+                                    ("AntiRansomware: Added protected path #%lu\n", gProtectedPathCount));
+                            } else {
+                                status = STATUS_INSUFFICIENT_RESOURCES;
+                            }
+                        } else {
+                            status = STATUS_TOO_MANY_NAMES;
+                        }
+                        ExReleaseFastMutex(&gPathListMutex);
+                    } else {
+                        status = STATUS_INVALID_PARAMETER;
+                    }
+                    break;
+
+                case IOCTL_AR_REMOVE_PROTECTED_PATH:
+                    //
+                    // Input: NT device path to remove (exact match, case-insensitive)
+                    //
+                    if (inputBufferLength > 0 && inputBufferLength <= MAX_WPATH_BYTES) {
+                        UNICODE_STRING target;
+                        ULONG j, k;
+                        target.Buffer      = (PWCHAR)inputBuffer;
+                        target.Length       = (USHORT)inputBufferLength;
+                        target.MaximumLength= (USHORT)inputBufferLength;
+                        ExAcquireFastMutex(&gPathListMutex);
+                        for (j = 0; j < gProtectedPathCount; j++) {
+                            if (RtlEqualUnicodeString(&gProtectedPaths[j], &target, TRUE)) {
+                                ExFreePoolWithTag(gProtectedPaths[j].Buffer, ANTIRANSOMWARE_TAG);
+                                // Shift remaining entries down
+                                for (k = j; k < gProtectedPathCount - 1; k++) {
+                                    gProtectedPaths[k] = gProtectedPaths[k + 1];
+                                }
+                                RtlZeroMemory(&gProtectedPaths[gProtectedPathCount - 1],
+                                              sizeof(UNICODE_STRING));
+                                gProtectedPathCount--;
+                                break;
+                            }
+                        }
+                        ExReleaseFastMutex(&gPathListMutex);
+                    } else {
+                        status = STATUS_INVALID_PARAMETER;
+                    }
+                    break;
+
+                case IOCTL_AR_CLEAR_PROTECTED_PATHS:
+                    {
+                        ULONG j;
+                        ExAcquireFastMutex(&gPathListMutex);
+                        for (j = 0; j < gProtectedPathCount; j++) {
+                            if (gProtectedPaths[j].Buffer != NULL) {
+                                ExFreePoolWithTag(gProtectedPaths[j].Buffer, ANTIRANSOMWARE_TAG);
+                                gProtectedPaths[j].Buffer = NULL;
+                            }
+                        }
+                        gProtectedPathCount = 0;
+                        ExReleaseFastMutex(&gPathListMutex);
+                    }
+                    break;
+
                 case IOCTL_AR_ISSUE_SERVICE_TOKEN:
                 case IOCTL_AR_REVOKE_SERVICE_TOKEN:
                 case IOCTL_AR_LIST_SERVICE_TOKENS:
                     // Placeholders for future Token implementation
                     status = STATUS_SUCCESS;
+                    break;
+
+                case IOCTL_AR_GET_EVENTS:
+                    //
+                    // Drain the blocked-access ring buffer into the caller's output buffer.
+                    // Output layout: ULONG count, then count * BLOCKED_EVENT structs.
+                    //
+                    {
+                        ULONG maxEvents, i;
+                        PUCHAR outPtr;
+
+                        if (outputBufferLength < sizeof(ULONG)) {
+                            status = STATUS_BUFFER_TOO_SMALL;
+                            break;
+                        }
+
+                        ExAcquireFastMutex(&gEventMutex);
+
+                        maxEvents = (ULONG)gEventCount;
+                        {
+                            ULONG space = (outputBufferLength - sizeof(ULONG)) / sizeof(BLOCKED_EVENT);
+                            if (maxEvents > space) maxEvents = space;
+                        }
+
+                        *(ULONG*)outputBuffer = maxEvents;
+                        outPtr = (PUCHAR)outputBuffer + sizeof(ULONG);
+
+                        for (i = 0; i < maxEvents; i++) {
+                            ULONG idx = (ULONG)((gEventHead + i) % AR_EVENT_BUFFER_SIZE);
+                            RtlCopyMemory(outPtr, &gEventBuffer[idx], sizeof(BLOCKED_EVENT));
+                            outPtr += sizeof(BLOCKED_EVENT);
+                        }
+
+                        // Consume the events we just copied
+                        gEventHead  = (LONG)((gEventHead + maxEvents) % AR_EVENT_BUFFER_SIZE);
+                        gEventCount -= (LONG)maxEvents;
+
+                        ExReleaseFastMutex(&gEventMutex);
+
+                        Irp->IoStatus.Information = sizeof(ULONG) + maxEvents * sizeof(BLOCKED_EVENT);
+                    }
                     break;
 
                 default:
