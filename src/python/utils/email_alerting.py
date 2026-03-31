@@ -473,12 +473,12 @@ class EmailAlertingSystem:
                             self._retry_queue.remove(entry)
                     continue
                 except Exception as err:
-                    pass  # fall through to challenge handling below
+                    _last_err = err  # save before Python deletes 'err' on except-block exit
 
                 # --- Handle the error from the initial send attempt ---
-                err_str = self._full_smtp_error(err)
+                err_str = self._full_smtp_error(_last_err)
                 err_lower = err_str.lower()
-                smtp_code = getattr(err, 'smtp_code', 0)
+                smtp_code = getattr(_last_err, 'smtp_code', 0)
 
                 # Extract any per-session challenge code
                 m = _re.search(
@@ -544,7 +544,7 @@ class EmailAlertingSystem:
                         f"   Still greylisted — retry "
                         f"#{attempt + 1} in 15 min.")
                 else:
-                    reason = "greylisting" if is_grey else str(err)
+                    reason = "greylisting" if is_grey else str(_last_err)
                     _console_print(
                         f"   Queued alert failed permanently after "
                         f"{attempt} attempts: {reason}")
