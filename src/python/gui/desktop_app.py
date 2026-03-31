@@ -2518,41 +2518,47 @@ class MainWindow(QMainWindow):
             print(f"refresh_recent_events error: {e}")
 
     def _send_email_alert(self, alert_type: str, severity: str, details: dict):
-        """Send an email alert, bypassing rate-limits and level-filters.
+        """Send an email alert in a background thread.
 
-        Runs in a daemon thread so it never blocks the GUI.
-        Only fires if email alerting is configured (has recipients and credentials).
+        Enforces a per-type 5-minute cooldown so rapid events (kernel
+        blocked-access poll firing every second, etc.) never flood the
+        SMTP server with simultaneous connections.
         """
         if not (HAS_EMAIL and self.email_alerter):
             return
         cfg = self.email_alerter.config
         if not cfg.get('recipients'):
-            return  # nowhere to send
+            return
         if not (cfg.get('username') or cfg.get('smtp_server')):
-            return  # not configured
+            return
 
+        import time as _time
         import threading as _threading
+
+        # Per-type cooldown — initialised once on the instance
+        if not hasattr(self, '_email_sent_times'):
+            self._email_sent_times = {}
+        cooldown = 300  # 5 minutes between same alert type
+        now = _time.time()
+        if now - self._email_sent_times.get(alert_type, 0) < cooldown:
+            return  # still within cooldown, skip
+        self._email_sent_times[alert_type] = now
 
         def _send():
             try:
-                # Temporarily force enabled + all levels + disable rate-limiting
+                # Force enabled + all severity levels so the alert goes
+                # through regardless of the user's current UI settings.
+                # Keep the emailer's rate-limit active (don't clear history)
+                # so the server isn't hammered if cooldown is somehow bypassed.
                 orig_enabled = cfg.get('enabled', False)
                 orig_levels  = cfg.get('alert_levels', {}).copy()
-                orig_rl      = cfg.get('rate_limit', {}).get('enabled', True)
-                orig_history = list(self.email_alerter.alert_history.get('alerts', []))
-
                 cfg['enabled'] = True
                 cfg['alert_levels'] = {k: True for k in ('CRITICAL','HIGH','MEDIUM','LOW','INFO')}
-                cfg.setdefault('rate_limit', {})['enabled'] = False
-                self.email_alerter.alert_history['alerts'] = []
-
                 try:
                     self.email_alerter.send_alert(alert_type, severity, details, attach_logs=False)
                 finally:
                     cfg['enabled'] = orig_enabled
                     cfg['alert_levels'] = orig_levels
-                    cfg['rate_limit']['enabled'] = orig_rl
-                    self.email_alerter.alert_history['alerts'] = orig_history
             except Exception as e:
                 print(f"Email alert error: {e}")
 
@@ -3274,8 +3280,8 @@ class MainWindow(QMainWindow):
                                             "Your credentials and server settings are correct.\n\n"
                                             "The mail server is temporarily delaying the email\n"
                                             "(greylisting) — this is normal for new senders.\n\n"
-                                            "The email will be delivered automatically within\n"
-                                            "5–15 minutes without any action needed.\n\n"
+                                            "A background retry will automatically re-send\n"
+                                            "in 15 minutes (up to 3 attempts).\n\n"
                                             "Real security alerts will also be queued and\n"
                                             "delivered once the server whitelists this sender.\n\n"
                                             "To get immediate delivery, ask your mail admin\n"
