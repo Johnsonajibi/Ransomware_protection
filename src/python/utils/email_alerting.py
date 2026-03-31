@@ -880,9 +880,33 @@ class EmailAlertingSystem:
                 raise
 
         except smtplib.SMTPException as e:
-            err = str(e)
-            _console_print(f"❌ SMTP error: {err}")
-            self._last_send_error = err
+            err_str = self._full_smtp_error(e)
+            err_lower = err_str.lower()
+            smtp_code = getattr(e, 'smtp_code', 0)
+            is_grey = (smtp_code in (450, 451) and 'greylisting' in err_lower) or \
+                      ('greylisting' in err_lower and '4.7.1' in err_str)
+            if is_grey:
+                tag = 'NOTSPAMTAG'
+                m = _re.search(
+                    r'(?:resend(?:\s+it)?\s+with\s+(?:the\s+)?code\s+)([A-Za-z0-9]{6,20})',
+                    err_str, _re.IGNORECASE)
+                if m:
+                    tag = m.group(1)
+                _console_print(f"   Greylisting detected (code={smtp_code}) — "
+                               f"email queued for retry in 15 min.")
+                try:
+                    self._enqueue_for_retry(
+                        msg, self.config['from_email'],
+                        self.config['recipients'] +
+                        self.config['cc_recipients'] +
+                        self.config['bcc_recipients'],
+                        alert_type, severity)
+                except Exception:
+                    pass
+                self._last_send_error = f"SPAM_CHALLENGE:{tag}:greylisting"
+                return False
+            _console_print(f"❌ SMTP error: {err_str}")
+            self._last_send_error = err_str
             return False
         except Exception as e:
             _console_print(f"❌ Failed to send email: {e}")
