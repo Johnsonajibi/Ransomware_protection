@@ -220,7 +220,8 @@ Get-MpPreference | Select-Object -ExpandProperty EnableControlledFolderAccess
                     
                     crypto = CryptographicProtection(self.token_manager)
                     if crypto.encrypt_file_contents(str(file_path), None):
-                        # Hide file using Windows API
+                        encrypted_count += 1
+                        # Hide file using Windows API (optional — don't fail if unavailable)
                         try:
                             import win32api
                             import win32con
@@ -228,8 +229,7 @@ Get-MpPreference | Select-Object -ExpandProperty EnableControlledFolderAccess
                                 str(file_path),
                                 win32con.FILE_ATTRIBUTE_HIDDEN | win32con.FILE_ATTRIBUTE_SYSTEM
                             )
-                            encrypted_count += 1
-                        except:
+                        except Exception:
                             pass
                 except:
                     pass
