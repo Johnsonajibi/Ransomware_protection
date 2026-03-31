@@ -17,7 +17,9 @@ Date: December 28, 2025
 """
 
 import os
+import re as _re
 import smtplib
+import threading
 import time
 import json
 import sys
@@ -121,6 +123,11 @@ class EmailAlertingSystem:
         
         # Event logger
         self.logger = SecurityEventLogger() if HAS_LOGGER else None
+
+        # Background greylisting retry queue
+        self._retry_queue: list = []
+        self._retry_lock = threading.Lock()
+        self._retry_thread: threading.Thread | None = None
     
     def _load_config(self) -> Dict:
         """Load email configuration"""
@@ -365,7 +372,197 @@ class EmailAlertingSystem:
 """
         
         return html
-    
+
+    def _connect_smtp(self):
+        """Open an authenticated SMTP connection using current config."""
+        import socket as _sock
+        smtp_server = self.config['smtp_server']
+        smtp_port = int(self.config['smtp_port'])
+        use_tls = self.config.get('use_tls', True)
+        try:
+            _probe = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+            _probe.connect((smtp_server, smtp_port))
+            ehlo_name = f'[{_probe.getsockname()[0]}]'
+            _probe.close()
+        except Exception:
+            ehlo_name = '[127.0.0.1]'
+        if smtp_port == 465:
+            conn = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            conn.ehlo(ehlo_name)
+        elif use_tls:
+            conn = smtplib.SMTP(smtp_server, smtp_port)
+            conn.ehlo(ehlo_name)
+            conn.starttls()
+            conn.ehlo(ehlo_name)
+        else:
+            conn = smtplib.SMTP(smtp_server, smtp_port)
+            conn.ehlo(ehlo_name)
+        if self.config.get('username') and self.config.get('password'):
+            conn.login(self.config['username'], self.config['password'])
+        return conn
+
+    def _enqueue_for_retry(self, msg, from_addr, to_addrs, alert_type, severity):
+        """Queue a greylisted message for automatic retry in 15 minutes.
+
+        Stores the message with a *clean* subject (no spam-challenge codes)
+        so that retries can negotiate fresh per-session codes.
+        """
+        import email as _email_mod
+        parsed = _email_mod.message_from_string(msg.as_string())
+        subj = str(parsed.get('Subject', ''))
+        # Strip any appended spam codes from the subject
+        clean_subj = _re.sub(r'(?:\s+[A-Za-z0-9]{6,20})+\s*$', '', subj)
+        if clean_subj != subj:
+            del parsed['Subject']
+            parsed['Subject'] = clean_subj
+        entry = {
+            'msg_str': parsed.as_string(),
+            'from_addr': from_addr,
+            'to_addrs': to_addrs,
+            'alert_type': alert_type,
+            'severity': severity,
+            'retry_after': time.time() + 15 * 60,
+            'attempts': 0,
+        }
+        with self._retry_lock:
+            self._retry_queue.append(entry)
+        _console_print("   Queued for retry in 15 min (greylisting).")
+        self._start_retry_worker()
+
+    @staticmethod
+    def _full_smtp_error(err):
+        """Extract a complete error string from an SMTP exception."""
+        s = str(err)
+        if hasattr(err, 'recipients') and err.recipients:
+            for _a, (_c, _m) in err.recipients.items():
+                s += ' ' + (_m.decode('utf-8', errors='replace')
+                            if isinstance(_m, bytes) else str(_m))
+        elif hasattr(err, 'smtp_error'):
+            _se = err.smtp_error
+            s += ' ' + (_se.decode('utf-8', errors='replace')
+                        if isinstance(_se, bytes) else str(_se))
+        return s
+
+    def _retry_worker(self):
+        """Background daemon: retries greylisted messages every 60 s.
+
+        Each retry performs the full spam-challenge negotiation:
+        send -> if 554, extract per-session code -> resend with code ->
+        if greylisted (451), re-queue for another 15 min.
+        """
+        MAX_ATTEMPTS = 3
+        while True:
+            time.sleep(60)
+            with self._retry_lock:
+                due = [e for e in self._retry_queue
+                       if time.time() >= e['retry_after']]
+            for entry in due:
+                entry['attempts'] += 1
+                attempt = entry['attempts']
+                _console_print(f"   Retry #{attempt} for queued alert...")
+                try:
+                    conn = self._connect_smtp()
+                    conn.sendmail(entry['from_addr'], entry['to_addrs'],
+                                  entry['msg_str'])
+                    conn.quit()
+                    self._record_alert(entry['alert_type'], entry['severity'])
+                    _console_print(
+                        f"✓ Queued alert delivered (attempt {attempt})")
+                    with self._retry_lock:
+                        if entry in self._retry_queue:
+                            self._retry_queue.remove(entry)
+                    continue
+                except Exception as err:
+                    pass  # fall through to challenge handling below
+
+                # --- Handle the error from the initial send attempt ---
+                err_str = self._full_smtp_error(err)
+                err_lower = err_str.lower()
+                smtp_code = getattr(err, 'smtp_code', 0)
+
+                # Extract any per-session challenge code
+                m = _re.search(
+                    r'(?:resend(?:\s+it)?\s+with\s+(?:the\s+)?code\s+)'
+                    r'([A-Za-z0-9]{6,20})',
+                    err_str, _re.IGNORECASE)
+                code = m.group(1) if m else None
+                if code == 'NOTSPAMTAG':
+                    code = None
+
+                is_spam_554 = (
+                    smtp_code == 554 or
+                    'unsolicited' in err_lower or
+                    '5.7.1' in err_str
+                ) and code
+                is_grey = (
+                    'greylisting' in err_lower or
+                    '4.7.1' in err_str or
+                    smtp_code in (450, 451)
+                )
+
+                if is_spam_554:
+                    # Server gave a new per-session code — retry with it
+                    import email as _email_mod
+                    parsed = _email_mod.message_from_string(entry['msg_str'])
+                    subj = str(parsed.get('Subject', ''))
+                    del parsed['Subject']
+                    parsed['Subject'] = f"{subj} {code}"
+                    _console_print(f"   New spam code '{code}' — "
+                                   f"retrying immediately...")
+                    try:
+                        import time as _time
+                        _time.sleep(3)
+                        conn2 = self._connect_smtp()
+                        conn2.sendmail(entry['from_addr'],
+                                       entry['to_addrs'],
+                                       parsed.as_string())
+                        conn2.quit()
+                        self._record_alert(entry['alert_type'],
+                                           entry['severity'])
+                        _console_print(
+                            f"✓ Queued alert delivered (attempt {attempt},"
+                            f" code {code})")
+                        with self._retry_lock:
+                            if entry in self._retry_queue:
+                                self._retry_queue.remove(entry)
+                        continue
+                    except Exception as err2:
+                        err2_str = self._full_smtp_error(err2)
+                        if 'greylisting' in err2_str.lower() or \
+                           '4.7.1' in err2_str or \
+                           getattr(err2, 'smtp_code', 0) in (450, 451):
+                            is_grey = True
+                            _console_print(
+                                "   Spam code accepted — greylisted again.")
+                        else:
+                            _console_print(
+                                f"   Retry with code failed: {err2}")
+
+                if is_grey and attempt < MAX_ATTEMPTS:
+                    entry['retry_after'] = time.time() + 15 * 60
+                    _console_print(
+                        f"   Still greylisted — retry "
+                        f"#{attempt + 1} in 15 min.")
+                else:
+                    reason = "greylisting" if is_grey else str(err)
+                    _console_print(
+                        f"   Queued alert failed permanently after "
+                        f"{attempt} attempts: {reason}")
+                    with self._retry_lock:
+                        if entry in self._retry_queue:
+                            self._retry_queue.remove(entry)
+
+    def _start_retry_worker(self):
+        """Start the retry worker thread if it is not already running."""
+        with self._retry_lock:
+            if self._retry_thread is None or not self._retry_thread.is_alive():
+                self._retry_thread = threading.Thread(
+                    target=self._retry_worker,
+                    daemon=True,
+                    name='email-retry',
+                )
+                self._retry_thread.start()
+
     def send_alert(self, alert_type: str, severity: str, details: Dict, 
                    attach_logs: Optional[bool] = None) -> bool:
         """
@@ -490,7 +687,6 @@ class EmailAlertingSystem:
                     smtplib.SMTPSenderRefused) as e:
                 # Parse server challenge code from error message.
                 # Many spam filters respond with "resend with code XYZ appended to subject"
-                import re as _re
 
                 # Build a plain-text version of the error — SMTPRecipientsRefused
                 # stores per-recipient tuples of (code, bytes_msg), so we must decode.
@@ -544,14 +740,31 @@ class EmailAlertingSystem:
                     tag = challenge or 'NOTSPAMTAG'
                     _console_print(f"   Spam challenge detected (code={smtp_code}) — "
                                    f"server said: {err_str[:300]!r}")
+
+                    # If this is pure greylisting (451) with only the
+                    # generic NOTSPAMTAG placeholder (not a real per-
+                    # session code), don't retry — the server will
+                    # accept the message once the greylist period
+                    # expires (typically 5-15 minutes).
+                    if is_greylisting and tag == 'NOTSPAMTAG':
+                        _console_print("   Greylisting detected — email will be delivered "
+                                       "automatically in 5-15 minutes.")
+                        self._enqueue_for_retry(
+                            msg, self.config['from_email'], all_recipients,
+                            alert_type, severity)
+                        self._last_send_error = f"SPAM_CHALLENGE:{tag}:greylisting"
+                        return False
+
                     _console_print(f"   Retrying with tag '{tag}'...")
                     import time as _time
-                    _time.sleep(3)
+                    _time.sleep(5)
 
                     # Patch subject with the server-requested tag
                     orig_subject = str(msg['Subject'])
                     del msg['Subject']
                     msg['Subject'] = f"{orig_subject} {tag}"
+                    _console_print(f"   Connecting to {smtp_server}:{smtp_port}...")
+                    _console_print(f"   Subject: {msg['Subject']}")
 
                     def _smtp_connect():
                         if smtp_port == 465:
@@ -571,22 +784,21 @@ class EmailAlertingSystem:
 
                     try:
                         server2 = _smtp_connect()
-                        server2.send_message(msg, to_addrs=all_recipients)
+                        # Use sendmail() with flattened message to ensure
+                        # the Subject header (with tag) is sent verbatim
+                        # in the DATA payload — some greylisting filters
+                        # only inspect the raw DATA stream.
+                        from_addr = self.config['from_email']
+                        raw_msg = msg.as_string()
+                        server2.sendmail(from_addr, all_recipients, raw_msg)
                         server2.quit()
                         self._record_alert(alert_type, severity)
                         _console_print("✓ Alert email sent (after spam-filter retry)")
                         self._last_send_error = ''
                         return True
                     except Exception as retry_err:
-                        # Greylisting requires a time delay — successive immediate
-                        # retries won't help. Report as SPAM_CHALLENGE so the GUI
-                        # shows "Config OK" (credentials correct, server queued it).
-                        if is_greylisting:
-                            self._last_send_error = f"SPAM_CHALLENGE:{tag}:{retry_err}"
-                            return False
-
-                        # For non-greylisting challenges, check if server gave a new code
                         retry_err_str = str(retry_err)
+                        retry_smtp_code = getattr(retry_err, 'smtp_code', 0)
                         if hasattr(retry_err, 'recipients') and retry_err.recipients:
                             for _a, (_c, _m) in retry_err.recipients.items():
                                 retry_err_str += ' ' + (
@@ -598,20 +810,56 @@ class EmailAlertingSystem:
                                 _se2.decode('utf-8', errors='replace')
                                 if isinstance(_se2, bytes) else str(_se2))
 
+                        retry_err_lower = retry_err_str.lower()
+
+                        # If the retry with the per-session code now gets
+                        # greylisted (554→451), the code was accepted —
+                        # treat as Config OK (greylisting will auto-clear).
+                        retry_is_greylisting = (
+                            retry_smtp_code in (450, 451) and
+                            'greylisting' in retry_err_lower
+                        ) or (
+                            'greylisting' in retry_err_lower and
+                            '4.7.1' in retry_err_str
+                        )
+                        if retry_is_greylisting:
+                            _console_print("   Spam code accepted — server is now greylisting.")
+                            _console_print("   Email will be delivered automatically "
+                                           "in 5-15 minutes.")
+                            self._enqueue_for_retry(
+                                msg, self.config['from_email'], all_recipients,
+                                alert_type, severity)
+                            self._last_send_error = (
+                                f"SPAM_CHALLENGE:{tag}:greylisting {retry_err}")
+                            return False
+
+                        # Check if server gave a new/different challenge code
+                        _console_print(f"   Retry failed (code={retry_smtp_code}) — "
+                                       f"server said: {retry_err_str[:300]!r}")
+
                         m2 = _re.search(
                             r'(?:resend(?:\s+it)?\s+with\s+(?:the\s+)?code\s+)([A-Za-z0-9]{6,20})',
                             retry_err_str, _re.IGNORECASE)
                         real_code = m2.group(1) if m2 else None
+                        # Ignore NOTSPAMTAG — it's a generic greylisting
+                        # placeholder, not a real per-session bypass code.
+                        if real_code == 'NOTSPAMTAG':
+                            real_code = None
 
                         if real_code and real_code != tag:
-                            _console_print(f"   Server gave code '{real_code}' — final attempt...")
-                            _time.sleep(3)
+                            _console_print(f"   Server gave new code '{real_code}' — final attempt...")
+                            _time.sleep(5)
+                            # Append the new code (keep the old one too —
+                            # server may require both codes in the subject).
                             cur_subj = str(msg['Subject'])
                             del msg['Subject']
-                            msg['Subject'] = cur_subj.replace(tag, real_code)
+                            msg['Subject'] = f"{cur_subj} {real_code}"
+                            _console_print(f"   Subject: {msg['Subject']}")
                             try:
                                 server3 = _smtp_connect()
-                                server3.send_message(msg, to_addrs=all_recipients)
+                                from_addr = self.config['from_email']
+                                raw_msg = msg.as_string()
+                                server3.sendmail(from_addr, all_recipients, raw_msg)
                                 server3.quit()
                                 self._record_alert(alert_type, severity)
                                 _console_print("✓ Alert email sent (challenge code accepted)")
@@ -620,9 +868,15 @@ class EmailAlertingSystem:
                             except Exception as final_err:
                                 self._last_send_error = f"SPAM_CHALLENGE:{real_code}:{final_err}"
                                 return False
-                        else:
+
+                        # Greylisting with no new code — server will accept
+                        # the message once the greylist period expires.
+                        if is_greylisting:
                             self._last_send_error = f"SPAM_CHALLENGE:{tag}:{retry_err}"
                             return False
+
+                        self._last_send_error = f"SPAM_CHALLENGE:{tag}:{retry_err}"
+                        return False
                 raise
 
         except smtplib.SMTPException as e:
